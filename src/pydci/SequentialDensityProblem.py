@@ -13,11 +13,11 @@ import pandas as pd
 from scipy.stats import gaussian_kde as gkde
 from scipy.stats import uniform, entropy
 from alive_progress import alive_bar
-from loguru import logger
 from rich.logging import RichHandler
 from rich.table import Table
 from rich.text import Text
 from rich.console import Console
+from loguru import logger
 
 
 def log_table(rich_table):
@@ -660,7 +660,7 @@ class SequentialDensityProblem():
     ):
         """
         """
-        fields = ['Iteration', 'Action', 'MUD', 'L_2', 'KL', 'Best(E(r))',
+        fields = ['Iteration', 'Action', 'L_2', 'KL', 'Best(E(r))',
                   'Mean(E(r))', 'std(E(r))']
 
         table = Table(show_header=True, header_style="bold magenta")
@@ -671,7 +671,6 @@ class SequentialDensityProblem():
         r = self.mud_res[-1]
         row = (str(len(self.mud_res)),
                f"{r['action']}",
-               f"{r['best'].estimate()}",
                f"{r['best_l2_err']:0.3f}",
                f"{r['best_kl']:0.3f}",
                f"{r['best'].expected_ratio():0.3f}",
