@@ -4,11 +4,9 @@ Sequential MUD Estimation Algorithms
 """
 
 import random
-import pdb
 import itertools
 import concurrent.futures
 import numpy as np
-from mud.base import SpatioTemporalProblem as STP
 import pandas as pd
 from scipy.stats import gaussian_kde as gkde
 from scipy.stats import uniform, entropy
@@ -18,6 +16,8 @@ from rich.table import Table
 from rich.text import Text
 from rich.console import Console
 from loguru import logger
+
+from pydci.SpatioTemporalAggregator import SpatioTemporalAggregator as STP
 
 
 def log_table(rich_table):
@@ -84,12 +84,22 @@ def _try_mud(spt, nc=1, times_mask=None, weights=None):
 
 class SequentialDensityProblem():
     """
-    Class defining a SequentialDensity Problem to perform parameter estimation on.
+    Class defining a SequentialDensity Problem for parameter estimation on.
+
+    To initialize the class, a forward model model, and parameters need to be
+    sepcified. The main entrypoint for solving the estimation problem is the
+    `seq_solve()` method, with the `search_params` class attribute contorlling
+    how the the sequential algorithm behaves.
 
     Attributes
     ----------
     forward_model : callable
         Function that runs the forward model. Should be callable using
+    x0 : ndarray
+        Initial state of the system.
+    true_param : ndarray
+        True parameter value for creating the reference data using the passed
+        in forward_model.
     """
     def __init__(self,
                  forward_model,
