@@ -7,6 +7,27 @@ import pandas as pd
 
 sns.set_style("darkgrid")  # set the default seaborn style for our plots
 
+# TODO: Matplotlib plotting options
+# plt.backend = "Agg"
+# plt.rcParams["mathtext.fontset"] = "stix"
+# plt.rcParams["font.family"] = "STIXGeneral"
+# plt.rcParams["figure.figsize"] = (10, 10)
+# plt.rcParams["font.size"] = 16
+# plt.rcParams["text.usetex"] = True
+# plt.rcParams["text.latex.preamble"] = r"\usepackage{bm}"
+# plt.rcParams["text.latex.preamble"] = r"\usepackage{amsfonts}"
+# 
+# params = {
+#     "axes.labelsize": 6,
+#     "axes.titlesize": 6,
+#     "xtick.labelsize": 6,
+#     "ytick.labelsize": 6,
+#     "axes.titlepad": 1,
+#     "axes.labelpad": 1,
+#     "font.size": 12,
+# }
+# plt.rcParams.update(params)
+
 
 class Plotter:
     def __init__(self) -> None:
@@ -432,3 +453,4 @@ class Plotter:
         _ = plt.tight_layout()
 
         return ax
+

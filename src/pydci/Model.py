@@ -143,14 +143,14 @@ class DynamicModel():
         push_forwards = None
         if samples is not None:
             if samples_x0 is None:
-                samples_x0 = np.empty((len(samples), len(self.x0)))
-                samples_x0[:] = self.x0 if x0 is None else x0
+                samples_x0 = self.get_initial_condition(
+                        self.x0, len(samples))
 
             push_forwards = np.zeros((len(samples),
                                       len(ts), self.n_states))
             with alive_bar(len(samples),
-                           title='Iteration {i} - Forward Solves:',
-                           force_tty=True, receipt=False, length=20) as bar:
+                           title=f'Solving model for samples:',
+                           force_tty=True, receipt=True, length=20) as bar:
                 for j, s in enumerate(samples):
                     push_forwards[j, :, :] = self.forward_model(
                         samples_x0[j], ts, tuple(s))
@@ -178,4 +178,18 @@ class DynamicModel():
         self.state_df = state_df
 
         return state_df, push_forwards
+
+    def get_initial_condition(self,
+                              x0,
+                              num_samples):
+        """
+        Get Initial condition for a number of samples. Initial condition is
+        given by populating x0 with measurement noise for each sample.
+        """
+        init_conds = np.empty((num_samples, self.n_states))
+        init_conds[:] = x0
+        init_conds = np.reshape(add_noise(init_conds.ravel(),
+                                          self.measurement_noise),
+                                (num_samples, self.n_states))
+        return init_conds
 

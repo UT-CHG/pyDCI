@@ -5,7 +5,7 @@ from matplotlib import pyplot as plt  # type: ignore
 
 from pydci.MUDProblem import MUDProblem
 from pydci.pca import pca, svd
-from pydci.util import add_noise, fit_domain
+from pydci.utils import add_noise, fit_domain
 
 try:
     import xarray as xr  # type: ignore

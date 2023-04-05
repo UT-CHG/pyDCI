@@ -112,7 +112,7 @@ def set_shape(array: np.ndarray, shape: Union[List, Tuple] = (1, -1)) -> np.ndar
     return array.reshape(shape) if array.ndim < 2 else array
 
 
-def get_uniform_box(self, center, factor=0.5, mins=None, maxs=None):
+def get_uniform_box(center, factor=0.5, mins=None, maxs=None):
     """
     Generate a domain of [min, max] values around a center value.
     """
@@ -135,3 +135,23 @@ def get_uniform_box(self, center, factor=0.5, mins=None, maxs=None):
 
     return domain
 
+def put_df(df, name, val, size=1):
+    """
+    Given an n-m dimensional `val`, stores into dataframe `df` with `n`
+    rows by unpacking the `m` columns of val into separate columns with
+    names `{name}_{j}` where j is the index of the column.
+    """
+    for idx in range(size):
+        df[f'{name}_{idx}'] = val[:, idx]
+    return df
+
+def get_df(df, name, size=1):
+    """
+    Gets an n-m dimensional `val` from `df` with `n` columns by retrieving
+    the `m` columns of val into from columns of `df` with names `{name}_{j}`
+    where j is the index of the column.
+    """
+    val = np.zeros((df.shape[0], size))
+    for idx in range(size):
+        val[:, idx] = df[f'{name}_{idx}'].values
+    return val

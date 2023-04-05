@@ -296,7 +296,7 @@ class SequentialDensityProblem():
         self.x0 = x0
 
         with alive_bar(len(self.samples),
-                       title='Iteration {i} - Forward Solves:',
+                       title=f'Iteration {self.iteration} - Forward Solves:',
                        force_tty=True, receipt=False, length=20) as bar:
             for j, s in enumerate(self.samples):
                 push_forwards[j, :, :] = self.forward_model(
@@ -501,6 +501,8 @@ class SequentialDensityProblem():
 
         if len(self.mud_res) < 2:
             # Need at least two results to detect shifts.
+            return False
+        elif self.mud_res[-2]['action'] == 'RESET':
             return False
 
         shift = False

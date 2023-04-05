@@ -43,3 +43,6 @@ def disable_log():
     """
     logger.disable('pydci')
     return logger
+
+
+logger = disable_log()
