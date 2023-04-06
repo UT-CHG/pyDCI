@@ -4,15 +4,16 @@ import pdb
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
-from scipy.stats import distributions as dist  # type: ignore
+from scipy.stats import entropy
 from scipy.stats import gaussian_kde as gkde  # type: ignore
 from scipy.stats import rv_continuous  # type: ignore
 
-from pydci.utils import fit_domain, set_shape, put_df, get_df
+from pydci.utils import fit_domain, set_shape, put_df
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from pydci.log import logger, enable_log, disable_log
+from pydci.log import logger
+
 
 class DCIProblem(object):
     """
@@ -47,28 +48,20 @@ class DCIProblem(object):
         lam,
         q_lam,
         obs_dist,
-        init_dist = None,
+        init_dist: rv_continuous = None,
         weights: ArrayLike = None,
         normalize: bool = False,
     ):
-        self.lam = set_shape(np.array(lam), (1, -1))
-        self.q_lam = set_shape(np.array(q_lam), (-1, 1))
+        self.init_state(lam, q_lam)
         self.dists = {'initial': init_dist,
                       'predicted': None,
                       'observed': obs_dist,
                       'updated': None}
-        self.state = pd.DataFrame(
-                np.zeros((self.n_samples, self.n_params + self.n_states + 6)),
-                columns=[f'lam_{i}' for i in range(self.n_params)] +
-                [f'q_lam_{i}' for i in range(self.n_states)] +
-                ['weight', 'pi_in', 'pi_pr', 'pi_obs', 'ratio', 'pi_up'])
-        self.state = put_df(self.state, 'q_lam', self.q_lam, size=self.n_params)
-        self.state = put_df(self.state, 'lam', self.lam, size=self.n_params)
 
         # Initialize weights
         self.set_weights(weights, normalize=normalize)
 
-        logger.info('Initialized Data-Consistent Inversion Class')
+        self.result = None
 
     @property
     def n_params(self):
@@ -82,18 +75,31 @@ class DCIProblem(object):
     def n_samples(self):
         return self.lam.shape[0]
 
-    def set_domain(self,
-                   domain: ArrayLike = None
-    ):
-        if domain is not None:
-            # Assert domain passed in is consistent with data array
-            self.domain = set_shape(np.array(domain), (1, -1))
-            assert (
-                self.domain.shape[0] == self.n_params
-            ), f"Size mismatch: domain: {self.domain.shape}, params: {self.n_params}"
+    @property
+    def pi_up(self):
+        """Updated Distribution"""
+        # Compute udpated density
+        if self.dists['updated'] is None:
+            self.dists['updated'] = gkde(
+                    self.lam.T,
+                    weights=self.state['ratio'] * self.state['weight'])
 
-        else:
-            self.domain = fit_domain(self.lam)
+        return self.dists['updated']
+
+    def init_state(self, lam, q_lam):
+        """
+        Initialize state dataframe
+        """
+        self.lam = set_shape(np.array(lam), (1, -1))
+        self.q_lam = set_shape(np.array(q_lam), (-1, 1))
+        self.state = pd.DataFrame(
+                np.zeros((self.n_samples, self.n_params + self.n_states + 6)),
+                columns=['weight', 'pi_in', 'pi_pr',
+                         'pi_obs', 'ratio', 'pi_up'] +
+                [f'lam_{i}' for i in range(self.n_params)] +
+                [f'q_lam_{i}' for i in range(self.n_states)])
+        self.state = put_df(self.state, 'q_lam', self.q_lam, size=self.n_states)
+        self.state = put_df(self.state, 'lam', self.lam, size=self.n_params)
 
     def set_weights(self, weights: ArrayLike = None, normalize: bool = False):
         """Set Sample Weights
@@ -226,7 +232,7 @@ class DCIProblem(object):
                                 weights=self.state['weight'])
         self.dists['predicted'] = distribution
 
-    def solve(self, **kwargs):
+    def _update(self):
         """
         Update Initial Distribution
 
@@ -239,25 +245,20 @@ class DCIProblem(object):
             :label: data_consistent_solution
 
         Note that if initial, predicted, and observed distributions have not
-        been set before running this method, they will be run with default
+        been seti before running this method, they will be run with default
         values. To set specific predicted, observed, or initial distributions
         use the ``set_`` methods.
 
         Parameters
         -----------
-        **kwargs : dict, optional
-            If specified, optional arguments are passed to the
-            :meth:`set_predicted` call in the case that the predicted
-            distribution has not been set yet.
 
         Returns
         -----------
-
         """
         if self.dists['initial'] is None:
             self.set_initial()
         if self.dists['predicted'] is None:
-            self.set_predicted(**kwargs)
+            self.set_predicted()
 
         self.state['pi_in'] = self.dists['initial'].pdf(
                 self.lam.T).T
@@ -275,6 +276,21 @@ class DCIProblem(object):
         self.state['pi_up'] = np.multiply(
                 self.state['pi_in'] * self.state['weight'],
                 self.state['ratio'])
+
+    def solve(self):
+        """
+
+        """
+        self._update()
+
+        results_cols = ['e_r', 'kl']
+        results = np.zeros((1, 2))
+        results[0, 0] = self.expected_ratio()
+        results[0, 1] = self.divergence_kl()
+
+        res_df = pd.DataFrame(results, columns=results_cols)
+
+        self.result = res_df
 
     def expected_ratio(self):
         """Expectation Value of R
@@ -300,7 +316,20 @@ class DCIProblem(object):
         """
         return np.average(self.state['ratio'], weights=self.state['weight'])
 
-    def update(self):
+    def divergence_kl(self):
+        """KL-Divergence Between observed and predicted.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        kl: float
+            Value of the kl divergence.
+        """
+        return entropy(self.state['pi_obs'], self.state['pi_pr'])
+
+    def sample_update(self, num_samples):
         """Updated Distribution
 
         Returns the expectation value of the R, the ratio of the observed to
@@ -322,175 +351,148 @@ class DCIProblem(object):
         expected_ratio : float
             Value of the E(r). Should be close to 1.0.
         """
-        # Compute udpated density
-        self.dists['updated'] = gkde(
-                self.lam.T,
-                weights=self.state['ratio'] * self.state['weight'])
-
-        return self.dists['updated']
+        return self.pi_up.resample(size=num_samples).T
 
     def plot_param_state(
         self,
-        true_vals=None,
-        mud_val=None,
         ax=None,
-        param_idxs=None,
+        param_idx=0,
+        ratio_col='ratio',
         plot_initial=False,
         plot_legend=True,
+        figsize=(8, 8),
     ):
         """
         Plotting functions for DCI Problem Class
         """
         sns.set_style("darkgrid")
 
+        labels = []
         if ax is None:
-            fig, ax = plt.subplots(1, 1, figsize=(6,6))
+            fig, ax = plt.subplots(1, 1, figsize=figsize)
 
-        param_idxs = range(self.n_params) if param_idxs is None else param_idxs
-        number_parameters = len(param_idxs)
-        bright_colors = sns.color_palette("bright", n_colors=number_parameters)
-        deep_colors = sns.color_palette("deep", n_colors=number_parameters)
+        bright_colors = sns.color_palette("bright", n_colors=self.n_params)
+        # deep_colors = sns.color_palette("deep", n_colors=self.n_params)
 
-        # Plot initial distributions for iteration
-        lambda_labels = [f"$\pi^{{up}}_{{\lambda_{j}}}$"
-                         for j in param_idxs]
-        [
-            sns.kdeplot(
+        pi_up_label = f"$\pi^{{up}}_{{\lambda_{param_idx}}}$"
+        sns.kdeplot(
                 data=self.state,
-                x=f'lam_{idx}',
+                x=f'lam_{param_idx}',
                 ax=ax,
                 fill=True,
-                color=bright_colors[j],
-                label=lambda_labels[j],
-                weights=self.state['weight'] * self.state['ratio'],
-            )
-            for j, idx in enumerate(param_idxs)
-        ]
+                color=bright_colors[param_idx],
+                label=pi_up_label,
+                weights=self.state['weight'] * self.state[ratio_col],
+        )
+        labels.append(pi_up_label)
         if plot_initial:
-            lambda_labels += [f"$\pi^{{in}}_{{\lambda_{j}}}$"
-                              for j in param_idxs]
-            [
-                sns.kdeplot(
-                    data=self.state,
-                    x=f'lam_{idx}',
-                    ax=ax,
-                    fill=True,
-                    color=bright_colors[j],
-                    linestyle=':',
-                    label=lambda_labels[len(param_idxs) + j],
-                    weights='weight',
-                )
-                for j, idx in enumerate(param_idxs)
-            ]
-
-        # Generate vertical lines for true values
-        true_labels = []
-        if true_vals is not None:
-            for p in param_idxs:
-                true_labels += [f"$\lambda^{{\dagger}}_{p} = " +
-                                f"{true_vals[0][p]:.4f}$"]
-                ax.axvline(
-                    x=true_vals[0][p],
-                    linewidth=3, color="orange",
-                    label=true_labels[-1]
-                )
-
-        # Add Shifts as vertical lines to the plot
-        mud_labels = []
-        if mud_val is not None:
-            for p in param_idxs:
-                mud_labels += [f"$\lambda^{{MUD}}_{p} = {mud_val[p]:.4f}$"]
-                ax.axvline(
-                    x=mud_val[p],
-                    linewidth=3,
-                    color="green",
-                    linestyle='--',
-                    label=mud_labels[-1],
-                )
+            pi_in_label = f"$\pi^{{in}}_{{\lambda_{param_idx}}}$"
+            sns.kdeplot(
+                data=self.state,
+                x=f'lam_{param_idx}',
+                ax=ax,
+                fill=True,
+                color=bright_colors[param_idx],
+                linestyle=':',
+                label=pi_in_label,
+                weights='weight',
+            )
+            labels.append(pi_in_label)
 
         # Set plot specifications
         ax.set_xlabel(r"$\Lambda$", fontsize=12)
         if plot_legend:
             ax.legend(
-                labels=lambda_labels + true_labels + mud_labels,
+                labels=labels,
                 fontsize=12,
                 title_fontsize=12,
             )
+
         plt.tight_layout()
 
-        return ax
+        return ax, labels
 
     def plot_obs_state(
         self,
         ax=None,
-        state_idxs=None,
-        plot_pf=False,
+        state_idx=0,
+        plot_pf=True,
+        plot_obs=True,
         plot_legend=True,
-        obs_label='q_lam',
+        obs_col='q_lam',
+        ratio_col='ratio',
+        figsize=(6, 6),
     ):
         """
         Plotting function for DCI Problem Class
         """
         sns.set_style("darkgrid")
 
+        labels = []
         if ax is None:
-            fig, ax = plt.subplots(1, 1, figsize=(6,6))
+            fig, ax = plt.subplots(1, 1, figsize=figsize)
 
-        state_idxs = range(self.n_states) if state_idxs is None else state_idxs
-        number_parameters = len(state_idxs)
-        bright_colors = sns.color_palette("bright", n_colors=number_parameters)
-        deep_colors = sns.color_palette("deep", n_colors=number_parameters)
+        bright_colors = sns.color_palette("bright", n_colors=self.n_states)
+        # deep_colors = sns.color_palette("deep", n_colors=number_parameters)
 
         # Plot predicted distribution
-        q_lambda_labels = [f"$\pi^{{pr}}_{{Q(\lambda)_{j}}}$"
-                           for j in state_idxs]
-        [
+        pr_label = "$\pi^{{pr}}_{{Q(\lambda)_{state_idx}}}$"
+        sns.kdeplot(
+            data=self.state,
+            x=f'{obs_col}_{state_idx}',
+            ax=ax,
+            fill=True,
+            color=bright_colors[state_idx],
+            label=pr_label,
+            weights=self.state['weight'],
+        )
+        labels.append(pr_label)
+        if plot_pf:
+            pf_label = f"$\pi^{{pf}}_{{Q(\lambda)_{state_idx}}}$"
             sns.kdeplot(
                 data=self.state,
-                x=f'{obs_label}_{idx}',
+                x=f'{obs_col}_{state_idx}',
                 ax=ax,
                 fill=True,
-                color=bright_colors[j],
-                label=q_lambda_labels[j],
-                weights=self.state['weight'],
+                color=bright_colors[state_idx],
+                linestyle=':',
+                label=pf_label,
+                weights=self.state['weight'] * self.state[ratio_col],
             )
-            for j, idx in enumerate(state_idxs)
-        ]
-
-        if plot_pf:
-            q_lambda_labels += [f"$\pi^{{pf}}_{{Q(\lambda)_{j}}}$"
-                              for j in state_idxs]
-            [
-                sns.kdeplot(
-                    data=self.state,
-                    x=f'{obs_label}_{idx}',
-                    ax=ax,
-                    fill=True,
-                    color=bright_colors[j],
-                    linestyle=':',
-                    label=q_lambda_labels[len(state_idxs) + j],
-                    weights=self.state['weight'] * self.state['ratio'],
-                )
-                for j, idx in enumerate(state_idxs)
-            ]
+            labels.append(pf_label)
 
         # TODO: How to plot this using SNS? 
-        obs_label = f"$\pi^{{obs}}_{{Q(\lambda)}}$"
-        obs_domain = ax.get_xlim()
-        obs_x = np.linspace(obs_domain[0], obs_domain[1], 100)
-        obs = self.dists['observed'].pdf(obs_x)
-        ax.plot(obs_x, obs, color='r', label=obs_label)
-        q_lambda_labels += [obs_label] # + q_lambda_labels
-
+        if plot_obs:
+            obs_label = "$\pi^{{obs}}_{{Q(\lambda)}}$"
+            obs_domain = ax.get_xlim()
+            obs_x = np.linspace(obs_domain[0], obs_domain[1], 10000)
+            obs_x_marginal = np.zeros((len(obs_x), self.n_states))
+            obs_x_marginal[:, state_idx] = obs_x
+            obs = self.dists['observed'].pdf(obs_x_marginal)[:, state_idx]
+            ax.plot(obs_x, obs, color='r', label=obs_label)
+            labels.append(obs_label)
 
         # Set plot specifications
         ax.set_xlabel(r"$\mathcal{D}$", fontsize=12)
         if plot_legend:
             ax.legend(
-                labels=q_lambda_labels,
+                labels=labels,
                 fontsize=12,
                 title_fontsize=12,
             )
         plt.tight_layout()
 
-        return ax
+        return ax, labels
+
+    def _parse_title(
+        self,
+      ):
+        """
+        Parse Title
+        """
+        kl = self.result['kl'].values[0]
+        e_r = self.result['e_r'].values[0]
+        title = (f"$\mathbb{{E}}(r)$= {e_r:.3f}, " +
+                 f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}")
+
+        return title

@@ -1,10 +1,10 @@
 from typing import Callable, List, Optional, Union
 import pdb
 
+import pandas as pd
 import numpy as np
 from numpy.typing import ArrayLike
 from scipy.stats import distributions as dist  # type: ignore
-from scipy.stats import gaussian_kde as gkde  # type: ignore
 from scipy.stats import rv_continuous  # type: ignore
 
 from pydci.DCIProblem import DCIProblem
@@ -26,123 +26,108 @@ class MUDProblem(DCIProblem):
         q_lam,
         data,
         std_dev,
-        aggregate='pca',
-        init_dist = None,
+        init_dist: rv_continuous = None,
         weights: ArrayLike = None,
         normalize: bool = False,
         max_nc: int = None
     ):
-        # Since we aggregate -> Observed distribution fixed
-        obs_dist = dist.norm(loc=0, scale=1)
+        # Assume gaussian error around mean of data with assumed noise
+        self.data = set_shape(np.array(data), (-1, 1))
+        obs_dist = dist.norm(loc=np.mean(data), scale=std_dev)
         super().__init__(lam, q_lam, obs_dist,
                          init_dist=init_dist,
                          weights=weights,
                          normalize=normalize)
         self.data = data
         self.std_dev = std_dev
-        if aggregate not in ['wme', 'pca']:
-            ValueError(f"Unrecognized QoI Map type {method}")
-        self.method = aggregate
-        self.max_nc = self.n_params if max_nc is None else max_nc
-
-        logger.info('Initialized MUD Problem')
+        self.mud_point = None
 
     def solve(self):
         """
         Solve Problem
         """
-        self.aggregate()
         super().solve()
-
-    def mud_point(self):
-        """Maximal Updated Density (MUD) Point
-
-        Returns the Maximal Updated Density or MUD point as the parameter
-        sample from the initial distribution with the highest update density
-        value:
-
-        .. math::
-            \\lambda^{MUD} := \\mathrm{argmax} \\pi_{up}(\\lambda)
-            :label: mud
-
-        Note if the updated distribution has not been computed yet, this
-        function will call :meth:`fit` to compute it.
-
-        Parameters
-        ----------
-
-        Returns
-        -------
-        mud_point : np.ndarray
-            Maximal Updated Density (MUD) point.
-        """
-        self.solve()
         m = np.argmax(self.state['pi_up'])
-        mud_pt = get_df(self.state.loc[[m]], 'lam', size=self.n_params)[0]
-        return mud_pt
-
-    def aggregate(self):
-        """
-        Build QoI Map Using Data and Measurements
-
-        Aggregate q_lam data with observed data for MUD convergence.
-        """
-        if f'q_{self.method}_0' in self.state.columns:
-            return
-        # TODO: Verify/reshape data appropriately
-        # TODO: sub sample data/qoi 
-        residuals = np.subtract(self.data.T, self.q_lam) / self.std_dev
-        n_qoi = 1
-        if self.method == "wme":
-            qoi = (np.sum(residuals, axis=1) /
-                   np.sqrt(self.n_samples)).reshape(-1, 1)
-        elif self.method == "pca":
-            # Learn qoi to use using PCA
-            pca_res, X_train = pca(residuals, n_components=self.max_nc)
-            self.pca = {
-                "X_train": X_train,
-                "vecs": pca_res.components_,
-                "var": pca_res.explained_variance_,
-            }
-            qoi = residuals @ pca_res.components_.T
-            n_qoi = self.max_nc
-
-        self.q_lam = qoi
-        self.state = put_df(self.state, f'q_{self.method}', qoi, size=n_qoi)
+        mud_point = get_df(self.state.loc[[m]], 'lam', size=self.n_params)
+        self.result = put_df(self.result, 'lam_MUD',
+                             mud_point, size=self.n_params)
+        self.mud_point = mud_point[0]
 
     def plot_param_state(
         self,
         true_vals=None,
         ax=None,
-        param_idxs=None,
-        plot_initial=False,
+        param_idx=0,
+        ratio_col='ratio',
+        plot_mud=True,
+        plot_initial=True,
         plot_legend=True,
+        figsize=(8, 8),
     ):
         """
         Plotting functions for DCI Problem Class
         """
-        mud_pt = self.mud_point()
-        ax = super().plot_param_state(true_vals=true_vals,
-                               ax=ax,
-                               param_idxs=param_idxs,
-                               mud_val=mud_pt,
-                               plot_initial=plot_initial,
-                               plot_legend=plot_legend)
+        ax, labels = super().plot_param_state(
+                ax=ax,
+                param_idx=param_idx,
+                ratio_col=ratio_col,
+                plot_legend=False,
+                plot_initial=plot_initial,
+                figsize=figsize
+        )
+
+        # Generate vertical lines for true values
+        if true_vals is not None:
+            lam_true_label = f"$\lambda^{{\dagger}}_{param_idx} = " + \
+                    f"{true_vals[0][param_idx]:.4f}$"
+            ax.axvline(
+                x=true_vals[0][param_idx],
+                linewidth=3, color="orange",
+                label=lam_true_label,
+            )
+            labels.append(lam_true_label)
+
+        if plot_mud is not None:
+            mud_label = f"$\lambda^{{MUD}}_{param_idx} = " + \
+                    f"{self.mud_point[param_idx]:.4f}$"
+            ax.axvline(
+                x=self.mud_point[param_idx],
+                linewidth=3,
+                color="green",
+                linestyle='--',
+                label=mud_label,
+            )
+            labels.append(mud_label)
+
+        if plot_legend:
+            ax.legend(
+                labels=labels,
+                fontsize=12,
+                title_fontsize=12,
+            )
+
+        return ax, labels
 
     def plot_obs_state(
         self,
         ax=None,
-        state_idxs=None,
-        plot_pf=False,
+        state_idx=0,
+        plot_pf=True,
+        plot_obs=True,
         plot_legend=True,
-        obs_label='q_lam',
+        obs_col='q_lam',
+        ratio_col='ratio',
+        figsize=(6, 6),
     ):
-        """
-        Plotting function for DCI Problem Class
-        """
-        ax = super().plot_obs_state(
-                ax=ax,
-                state_idxs=state_idxs,
-                plot_pf=plot_pf,
-                plot_legend=plot_legend,
-                obs_label=f'q_{self.method}')
+        ax, labels = super().plot_obs_state(
+            ax=ax,
+            state_idx=state_idx,
+            plot_pf=plot_pf,
+            plot_obs=plot_obs,
+            plot_legend=plot_legend,
+            obs_col=obs_col,
+            ratio_col=ratio_col,
+            figsize=figsize,
+        )
+
+        return ax, labels

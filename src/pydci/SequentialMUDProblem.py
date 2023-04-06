@@ -2,28 +2,22 @@
 Sequential MUD Estimation Algorithms
 
 """
+import pdb
 
-import random
-import itertools
-import concurrent.futures
+from scipy.stats.distributions import norm
 import numpy as np
+import random
 import pandas as pd
-from scipy.stats import gaussian_kde as gkde
-from scipy.stats import uniform, entropy
-from alive_progress import alive_bar
-from rich.logging import RichHandler
 from rich.table import Table
-from rich.text import Text
-from rich.console import Console
-from loguru import logger
 
-from pydci.MUDProblem import MUDProblem
-from pydci.utils import get_uniform_box
+from pydci.PCAMUDProblem import PCAMUDProblem
+from pydci.utils import put_df, get_df
 
-from pydci.log import logger, enable_log, disable_log
+from pydci.log import logger, log_table
+from scipy.stats.distributions import norm
 
 
-class SequentialMUDProblem():
+class SequentialMUDProblem(PCAMUDProblem):
     """
     Class defining a SequentialDensity Problem for parameter estimation on.
 
@@ -39,353 +33,236 @@ class SequentialMUDProblem():
     x0 : ndarray
         Initial state of the system.
     """
-    def __init__(self,
-                 model,
-                 diff=0.5,
-                 hot_starts=True,
-                 domain=None,
-                 param_mins=None,
-                 param_maxs=None,
-                 search_params={}
-                 ):
 
-        self.model = model
-        self.hot_starts = hot_starts
-        self.set_domain(self.model.true_param,
-                        domain=None,
-                        diff=diff,
-                        param_mins=param_mins,
-                        param_maxs=param_maxs)
+    def __init__(
+            self,
+            *args,
+            qoi_method: str = 'all',
+            e_r_delta : float = 0.5,
+            kl_thresh : float = 3.0,
+            min_weight_thresh : float = 1e-4,
+            **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.states = []
+        self.results = []
+        self.hist = {'results': [],
+                     'states': [],
+                     'data': [],
+                     'std_dev': []}
+        self.e_r_delta = e_r_delta
+        self.kl_thresh = kl_thresh
+        self.min_weight_thresh = min_weight_thresh
+        self.qoi_method = qoi_method
+        self._validate_params()
 
-        self.search_params = {
-            'nc': 1,
-            'method': 'all',
-            'best': 'closest',
-            'max_tries': 10,
-            'exp_thresh': 1e10,
-            'mean_exp_delta_thresh': None,
-            'kl_thresh_factor': None,
-            'reweight': True,
-            'resample': True,
-            'min_weight_thresh': 0.0,
-        }
-        self.search_params.update(search_params)
-
-    def _put_df(self, df, name, val, typ='param'):
+    def _validate_params(self):
         """
-        Given an n-m dimensional `val`, stores into dataframe `df` with `n`
-        rows by unpacking the `m` columns of val into separate columns with
-        names `{name}_{j}` where j is the index of the column.
+        Validate Search params
         """
-        size = self.n_params if typ == 'param' else self.n_states
-        for idx in range(size):
-            df[f'{name}_{idx}'] = val[:, idx]
-        return df
+        if erd := self.e_r_delta < 0.5:
+            raise ValueError(
+                    f"Shift detection delta(E(r)) must be >= 0.5: {erd}")
+        if kl := self.kl_thresh < 3.0:
+            raise ValueError(
+                    f"Shift detection D_KL_thresh(r) must be >= 3.0: {kl}")
+        am = ['all', 'linear', 'random']
+        if qoi := self.qoi_method not in am:
+            raise ValueError(f"Unrecognized qoi method: {qoi}. Allowed: {am}")
 
-    def _get_df(self, df, name, typ='param'):
+    def _get_qoi_combinations(
+        self,
+        max_tries=10,
+    ):
         """
-        Gets an n-m dimensional `val` from `df` with `n` columns by retrieving
-        the `m` columns of val into from columns of `df` with names `{name}_{j}`
-        where j is the index of the column.
+        Utility function to determine sets of ts combinations to iterate through
         """
-        size = self.n_params if typ == 'param' else self.n_states
-        val = np.zeros((df.shape[0], size))
-        for idx in range(size):
-            val[:, idx] = df[f'{name}_{idx}'].values
-        return val
+        if self.qoi_method == 'all':
+            combs = [list(np.arange(self.n_qoi))]
+        elif self.qoi_method == 'linear':
+            combs = [list(np.arange(0, i))
+                     for i in range(self.max_nc, self.n_qoi)]
+        elif self.qoi_method == 'random':
+            # Divide the max#tries amongs the number of timesteps available
+            if self.n_qoi < max_tries:
+                num_ts_list = range(self.max_nc, self.n_qoi + 1)
+                tries_per = int(max_tries/self.n_qoi)
+            else:
+                num_ts_list = range(self.max_nc, self.n_qoi + 1, int(self.n_qoi/max_tries))
+                tries_per = 1
 
-    @property
-    def n_params(self) -> int:
-        return self.model.n_params
+            combs = []
+            qoi_choices = range(0, self.n_qoi)
+            for num_ts in num_ts_list:
+                possible = list([list(x) for x in itertools.combinations(
+                    qoi_choices, num_ts)])
+                tries_per = tries_per if tries_per < len(possible) else len(possible)
+                combs += random.sample(possible, tries_per)
 
-    @property
-    def n_states(self) -> int:
-        return self.model.n_states
-
-    def set_domain(self,
-                   center,
-                   domain=None,
-                   diff=0.5,
-                   param_mins=None,
-                   param_maxs=None):
-        """
-        Set domain over parameter space to search over during the sequential
-        estimation algorithm. A `domain` can be explicitly specified. Otherwise,
-        a domain is inferred by taking a range within +- diff * self.true_param
-        of the true parameter. If param_mins/maxs are specified, then the domain
-        for each parameter is truncated as necessary.
-        """
-        if domain is None:
-            logger.info(f"Computing domain within {diff} of {center}")
-            self.domain = get_uniform_box(
-                center, factor=diff,
-                mins=param_mins, maxs=param_maxs
-            )
-        else:
-            self.domain = domain
-        logger.info(f"Initialized uniform domain:\n{self.domain}")
-
-    def get_initial_samples(self,
-                            num_samples=1000):
-        """
-        Generate initial samples from uniform distribution over domain set by
-        `self.set_domain`.
-        """
-        loc = self.domain[:, 0]
-        scale = self.domain[:, 1] - self.domain[:, 0]
-        logger.info(f"Drawing {num_samples} from uniform at:\n" +
-                    f"\tloc: {loc}\n\tscale: {scale}")
-        samples = uniform.rvs(loc=loc, scale=scale,
-                              size=(num_samples, self.n_params))
-        return samples
-
-    def forward_solve(self):
-        """
-        Forward Model Solve
-
-        Solve the forward model from t0 to t1. If a set of samples are passed,
-        the samples are pushed forward through the forward model as well. Note
-        when evaluating the true solution, this function will divide the time
-        range into intervals as dictacted by the `param_shifts` attribute. The
-        split time range, with the true param values to use in each interval,
-        can be accessed at the `intervals` attribute after this method has
-        been run.
-
-        Merged with:
-
-        Compute Observable
-
-        Sample the current state of the system (states over time) and set the
-        classes's stp attribute to the observed state of the system we can
-        then compute MUD estimates off of using data-constructed maps.
-
-
-        Parameters here:
-          - Time step (and window length)
-          - sample_ts
-          - solve_ts
-        """
-        t0 = self.time_windows[self.iteration]
-        t1 = self.time_windows[self.iteration + 1]
-
-        state_df, push_forwards = self.model.forward_solve(
-                t0, t1, x0=self.x0,
-                samples=self.samples)
-        state_df['iteration'] = self.iteration
-
-        self.push_forwards = push_forwards
-        self.state_df = state_df
+        return combs
 
     def _detect_shift(
-        self,
+            self,
+            res,
     ):
         """
         """
-        mean_exp_delta_thresh = self.search_params['mean_exp_delta_thresh']
-        kl_thresh_factor = self.search_params['kl_thresh_factor']
-
-        if len(self.mud_res) < 2:
-            # Need at least two results to detect shifts.
-            return False
-        elif self.mud_res[-2]['action'] == 'RESET':
-            # Don't want to have two shifts in a row.
-            return False
-
         shift = False
-        # Mean condition - If significan shift in the mean exp_r value detected
-        if mean_exp_delta_thresh is not None:
-            mean_e_r = self.dfs['results'][-1]['e_r'].mean()
-            prev_mean_e_r = self.dfs['results'][-2]['e_r'].mean()
-            if np.abs(prev_mean_e_r - mean_e_r) > mean_exp_delta_thresh:
-                shift = True
+        prev = self.get_prev_best()
+        if prev is None:
+            return False
+        if prev['action'] == 'RESET':
+            return False
 
-        # KL Div. Condition - If KL > 3.0 (3 std-dev since obs is N(0,1))
-        if kl_thresh_factor is not None:
-            if self.dfs['results'][-1]['kl'].values[0] >= kl_thresh_factor:
-                shift = True
+        # Mean condition - Shift in the mean exp_r value detected
+        shift = True
+        if self.e_r_delta is not None:
+            condition = np.abs(prev['e_r'] -
+                               res['e_r'].values[0]) <= self.e_r_delta
+            shift = shift if condition else False
+
+        # KL Divergence Condition - If exceeds threshold then shift
+        if self.kl_thresh is not None:
+            condition = res['kl'].values[0] < self.kl_thresh
+            shift = shift if condition else False
 
         return shift
 
-    def _determine_action(
+    def get_action(
         self,
+        res,
     ):
         """
         """
-        # Get search parameters relevant for determining next step
-        exp_thresh = self.search_params['exp_thresh']
-        min_weight_thresh = self.search_params['min_weight_thresh']
-        resample = self.search_params['resample']
-        reweight = self.search_params['reweight']
+        action = None
+        if np.abs(1.0 - res['e_r'].values[0]) <= self.exp_thresh:
+            if self.min_weight_thresh is not None:
+                r_min = self.state[f"ratio"].min()
+                r_min = r_min[0] if not isinstance(r_min, np.float64) else r_min
+                if r_min >= self.min_weight_thresh:
+                    action = 'RE-WEIGHT'
+            if action != 'RE-WEIGHT':
+                action = 'UPDATE'
+        elif self._detect_shift(res):
+            action = 'RESET'
 
-        best = self.mud_res[-1]['best']
-        best_e_r = best.expected_ratio()
-        res = {'action': 'NONE',
-               'weights': None}
-        if self._detect_shift():
-            # TODO: Add old logger call
-            logger.info(f'Shift detected at {self.iteration}')
-            if resample:
-                res['samples'] = self.get_initial_samples()
-            res['action'] = 'RESET'
-        elif np.abs(1.0 - best_e_r) <= exp_thresh:
-            if reweight:
-                min_ratio = best._r.min()
-                if min_ratio >= min_weight_thresh:
-                    logger.info(
-                        "\tUpdating weights: e_r within threshold 1+-"
-                        + f"{exp_thresh:0.2f}, reweight set, and "
-                        + f"{min_ratio:.2e} >= {min_weight_thresh:.2e}"
-                    )
-                    res['weights'] = best._r
-                    res['action'] = 'RE-WEIGHT'
-                else:
-                    logger.info(
-                        f"Reweight set but {min_ratio:.2e} < " +
-                        f"{min_weight_thresh:.2e}")
-            if resample and res['action'] != 'RE-WEIGHT':
-                logger.info(
-                    f"\tRe-Sampling: e_r within 1+-{exp_thresh:0.2f}")
-                res['up_dist'] = gkde(self.samples.T, weights=best._r)
-                res['samples'] = res['up_dist'].resample(
-                    size=len(self.samples)).T
-                res['action'] = 'UPDATE'
-        else:
-            logger.info('No action taken!')
+        return action
 
-        return res
-
-    def find_best_mud_estimate(self):
-        """
-        """
-        q_lam = np.array(self.push_forwards[:,np.where(
-            slef.state_df['sample_flag'].values),:]).reshape(
-                    self.n_samples, -1)
-        data = get_df(self.state_df.loc[self.state_df['sample_flag']],
-                      'obs_vals', size=2)
-        data = data.reshape(-1,1)
-
-        mud_prob = MUDProblem(lam, q_lam, data, 0.4, max_nc=2)
-        mud_prob.mud_point(), mud_prob.expected_ratio()
-
-
-    def iteration_update(self,
-                         num_samples_to_save=10):
-        """
-        Update class attributes according to action determined per iteration.
-        """
-        # Determine next action to take
-        action = self._determine_action()
-
-        # Add action taken to results df
-        self.dfs['results'][-1]['action'] = action['action']
-
-        # Add to full state DF
-        best_sample = np.argmax(self.mud_res[-1]['best']._up)
-        worst_sample = np.argmin(self.mud_res[-1]['best']._up)
-        if self.iteration == 0:
-            rand_idxs = random.choices(range(len(self.samples)),
-                                       k=num_samples_to_save)
-            self.rand_idxs = rand_idxs
-        else:
-            rand_idxs = self.rand_idxs
-
-        state_df = self._put_df(self.state_df, 'best',
-                                self.push_forwards[best_sample],
-                                typ='state')
-        state_df = self._put_df(state_df, 'worst',
-                                self.push_forwards[worst_sample],
-                                typ='state')
-        for idx in rand_idxs:
-            state_df = self._put_df(state_df, f'random_{idx}',
-                                    self.push_forwards[idx],
-                                    typ='state')
-        self.dfs['state'].append(state_df)
-
-        # Samples DF - Store parameter samples, associated weights and ratios
-        # This DF should be sufficient to plot init/update distributions by
-        # doing KDEs on the parameter values using the weights/ratios.
-        samples_df = pd.DataFrame(
-                self.samples,
-                columns=[f'lam_{i}' for i in range(self.n_params)])
-        samples_df['ratio'] = self.mud_res[-1]['best']._r
-        samples_df['weights'] = self.mud_res[-1]['best']._weights
-        samples_df['up_weights'] = action['weights']
-        samples_df['iteration'] = self.iteration
-        self.dfs['samples'].append(samples_df)
-
-        # Update for next iteration
-        self.mud_res[-1]['action'] = action['action']
-        self.weights = action['weights']
-        if 'up_dist' in action.keys():
-            self.up_dist = action['up_dist']
-        if 'samples' in action.keys():
-            self.samples = action['samples']
-        self.iteration = self.iteration + 1
-
-    def seq_solve(
+    def solve(
         self,
-        time_windows,
-        num_samples=1000,
-        init_seed=None,
-        obs_seed=None,
     ):
         """
-        Sequential estimation algorithm
+        Detect shift and determine next action.
         """
-        # TODO: Detect if previous solve?
-        np.random.seed(init_seed)  # Initial seed for sampling
-        time_windows.sort()
-        if 0 not in time_windows:
-            time_windows.insert(0, 0)
+        qoi_combs = self._get_qoi_combinations()
 
-        # Initialize Solver
-        self.iteration = 0
-        self.num_its = len(time_windows) - 1
-        self.time_windows = time_windows
-        self.samples = self.get_initial_samples(num_samples)
-        self.weights = None
-        self.mud_res = []
-        self.up_dist = gkde(self.samples.T)
-        self.dfs = {
-                'state': [],
-                'results': [],
-                'samples': [],
-                'ts_choices': [],
-        }
+        results = []
+        state_cols = {}
+        for q_idx, qc in enumerate(qoi_combs):
+            self.pca_mask = qc
+            super().solve()
 
-        logger.info(f'Solver init - {self.num_its} windows: {time_windows}')
-        for i in range(len(self.time_windows) - 1):
-            logger.info(f'Starting Iteration {self.iteration}.') 
-            self.forward_solve()
-            self.mud_res.append(self.find_best_mud_estimate())
-            self.iteration_update()
-            logger.info(
-                f"Iteration {self.iteration}: " +
-                f"[{time_windows[self.iteration-1]}, " +
-                f"{time_windows[self.iteration]}] Summary:\n" +
-                f"{log_table(self.get_summary_row())}")
+            res_df = self.result
+
+            actions = []
+            for nc, res in res_df.groupby('nc'):
+                actions.append(self.get_action(res))
+            res_df['action'] = actions
+
+            cs = ['pi_obs', 'pi_pr', 'ratio', 'pi_up']
+            for nc in range(self.max_nc):
+                for col in cs:
+                    col_name = f'{col}_{q_idx}_nc={nc+1}'
+                    state_cols[col_name] = self.pca_states[f'{col}_nc={nc+1}']
+
+            results.append(res_df)
+
+        self.search_states = pd.concat(state_cols, axis=1)
+
+        res_df = pd.concat(results, keys=np.arange(len(qoi_combs)))
+        res_df['closest'] = np.logical_and(
+            res_df['predict_delta'] <=
+            res_df[res_df['within_thresh']]['predict_delta'].min(),
+            res_df['within_thresh'])
+        res_df['max_kl'] = np.logical_and(
+            res_df['kl'] >= res_df[res_df['within_thresh']]['kl'].max(),
+            res_df['within_thresh'])
+        res_df['min_kl'] = np.logical_and(
+            res_df['kl'] <= res_df[res_df['within_thresh']]['kl'].min(),
+            res_df['within_thresh'])
+
+        self.results = res_df
+        best_nc = int(res_df.iloc[res_df[self.best_method].argmax()]['nc'])
+        self.dists['observed'] = norm(loc=best_nc*[0], scale=1)
+        self.set_predicted()
+        self.q_lam = self.q_lam[:, 0:best_nc]
+        for col in cs:
+            # Set to best nc
+            self.state[col] = self.pca_states[f'{col}_nc={best_nc}']
+
+        self.result = res_df.iloc[[res_df[self.best_method].argmax()]]
+
+    def update_iteration(
+        self,
+        lam,
+        q_lam,
+        data,
+        std_dev,
+        weights=None,
+    ):
+        """
+        """
+        self.hist['results'].append(self.results)
+        self.hist['states'].append(self.state)
+        self.hist['data'].append(self.data)
+        self.hist['std_dev'].append(self.std_dev)
+        self.init_state(lam, q_lam)
+        self.data = data
+        self.std_dev = std_dev
+        self.max_nc = self.n_states if self.n_params > self.n_states \
+            else self.n_params
+        self.dists = {'initial': None,
+                      'predicted': None,
+                      'observed': norm(loc=self.max_nc*[0], scale=1),
+                      'updated': None}
+        self.set_weights(weights)
+
+        if weights is not None:
+            self.state['weight'] = weights
+
+    def get_prev_best(
+            self,
+    ):
+        """
+        Get previous best from last iteration
+        """
+        if len(self.hist['results']) < 1:
+            return None
+        prev = self.hist['results'][-1]
+        prev_best_idx = prev[self.best_method].argmax()
+        return prev.iloc[prev_best_idx]
 
     def get_summary_row(
             self,
     ):
         """
         """
-        fields = ['Iteration', 'Action', 'L_2', 'KL', 'Best(E(r))',
-                  'Mean(E(r))', 'std(E(r))']
+        best = self.search_params['best']
+
+        fields = ['Iteration', 'Action', 'NC', 'E(r)', 'D_KL']
 
         table = Table(show_header=True, header_style="bold magenta")
         cols = ['Key', 'Value']
         for c in cols:
             table.add_column(c)
 
-        r = self.mud_res[-1]
+        res_df = self.results[-1]
+        best_idx = res_df[best].argmax()
         row = (str(len(self.mud_res)),
-               f"{r['action']}",
-               f"{r['best_l2_err']:0.3f}",
-               f"{r['best_kl']:0.3f}",
-               f"{r['best'].expected_ratio():0.3f}",
-               f"{r['mean_e_r']:0.3f}",
-               f"{r['e_r_std']:0.3f}")
+               f"{res_df.loc[best_idx]['action']}",
+               f"{res_df.loc[best_idx]['nc']:1.0f}",
+               f"{res_df.loc[best_idx]['e_r']:0.3f}",
+               f"{res_df.loc[best_idx]['kl']:0.3f}")
         for i in range(len(fields)):
             table.add_row(fields[i], row[i])
 
@@ -410,4 +287,3 @@ class SequentialMUDProblem():
         return pd.concat(dfs, axis=0)
 
 
-disable_log()

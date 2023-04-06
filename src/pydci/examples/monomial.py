@@ -86,10 +86,12 @@ def monomial(
     init_dist = ds.uniform(loc=domain[0], scale=domain[1] - domain[0])
     lam = init_dist.rvs(size=(num_samples, 1))
     q_lam = QoI(lam, p).reshape(-1, 1)  # Evaluate lam^5 samples
+    q_lam = np.repeat(q_lam, N).reshape(num_samples, -1)
     if N == 1:
         data = np.array([mu])
     else:
         data = norm.rvs(loc=mu, scale=sigma**2, size=N)
+
 
     return lam, q_lam, data
 

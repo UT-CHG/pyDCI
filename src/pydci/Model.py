@@ -4,11 +4,11 @@ Dynamic Model Class
 """
 import numpy as np
 import pandas as pd
-from scipy.stats import gaussian_kde as gkde
-from scipy.stats import uniform, entropy
 from alive_progress import alive_bar
 
-from pydci.utils import get_uniform_box, add_noise
+from pydci.log import logger
+from scipy.stats.distributions import uniform
+from pydci.utils import get_uniform_box, add_noise, get_df, put_df
 
 
 class DynamicModel():
@@ -29,6 +29,7 @@ class DynamicModel():
                  forward_model,
                  x0,
                  true_param,
+                 t0=0.0,
                  measurement_noise=0.05,
                  solve_ts=0.2,
                  sample_ts=1,
@@ -41,35 +42,17 @@ class DynamicModel():
 
         self.forward_model = forward_model
         self.x0 = x0
+        self.t0 = t0
+        self.samples = None
+        self.samples_x0 = None
         self.true_param = true_param
         self.measurement_noise = measurement_noise
         self.solve_ts = solve_ts
         self.sample_ts = sample_ts
         self.hot_starts = hot_starts
         self.param_shifts = {} if param_shifts is None else param_shifts
-
-    def _put_df(self, df, name, val, typ='param'):
-        """
-        Given an n-m dimensional `val`, stores into dataframe `df` with `n`
-        rows by unpacking the `m` columns of val into separate columns with
-        names `{name}_{j}` where j is the index of the column.
-        """
-        size = self.n_params if typ == 'param' else self.n_states
-        for idx in range(size):
-            df[f'{name}_{idx}'] = val[:, idx]
-        return df
-
-    def _get_df(self, df, name, typ='param'):
-        """
-        Gets an n-m dimensional `val` from `df` with `n` columns by retrieving
-        the `m` columns of val into from columns of `df` with names `{name}_{j}`
-        where j is the index of the column.
-        """
-        size = self.n_params if typ == 'param' else self.n_states
-        val = np.zeros((df.shape[0], size))
-        for idx in range(size):
-            val[:, idx] = df[f'{name}_{idx}'].values
-        return val
+        self.param_mins = param_mins
+        self.param_maxs = param_maxs
 
     @property
     def n_params(self) -> int:
@@ -78,6 +61,11 @@ class DynamicModel():
     @property
     def n_states(self) -> int:
         return len(self.x0)
+
+    @property
+    def n_samples(self) -> int:
+        if self.samples is not None:
+            return len(self.samples)
 
     def get_param_intervals(self, t0, t1):
         """
@@ -102,7 +90,7 @@ class DynamicModel():
 
         return ts, shift_idx, param_vals
 
-    def forward_solve(self, t0, t1, x0=None, samples=None, samples_x0=None):
+    def forward_solve(self, tf, x0=None, t0=None, samples=None, samples_x0=None):
         """
         Forward Model Solve
 
@@ -128,9 +116,14 @@ class DynamicModel():
           - sample_ts
           - solve_ts
         """
-        ts, shift_idx, param_vals = self.get_param_intervals(t0, t1)
+        if x0 is not None:
+            self.x0 = x0
+        x0_temp = self.x0
+        if t0 is not None:
+            self.t0 = t0
+
+        ts, shift_idx, param_vals = self.get_param_intervals(self.t0, tf)
         true_vals = np.zeros((len(ts), self.n_states))
-        x0_temp = self.x0 if x0 is None else x0
 
         for i in range(shift_idx[-1] + 1):
             idxs = shift_idx == i
@@ -139,22 +132,6 @@ class DynamicModel():
             true_vals[idxs] = self.forward_model(
               x0_temp, times, tuple(true_param))
             x0_temp = true_vals[idxs][-1]
-
-        push_forwards = None
-        if samples is not None:
-            if samples_x0 is None:
-                samples_x0 = self.get_initial_condition(
-                        self.x0, len(samples))
-
-            push_forwards = np.zeros((len(samples),
-                                      len(ts), self.n_states))
-            with alive_bar(len(samples),
-                           title=f'Solving model for samples:',
-                           force_tty=True, receipt=True, length=20) as bar:
-                for j, s in enumerate(samples):
-                    push_forwards[j, :, :] = self.forward_model(
-                        samples_x0[j], ts, tuple(s))
-                    bar()
 
         sample_step = int(self.sample_ts / self.solve_ts)
         sample_ts_flag = np.mod(np.arange(len(ts)), sample_step) == 0
@@ -166,18 +143,81 @@ class DynamicModel():
             true_vals[sample_ts_flag].shape,
         )
 
+        x0_temp = self.x0
+        self.t0 = ts[sample_ts_flag][-1]
+        self.x0 = measurements[sample_ts_flag][-1]
+
+        push_forwards = None
+        if samples is not None:
+            if samples_x0 is None:
+                if self.samples_x0 is None:
+                    self.samples_x0 = self.get_initial_condition(
+                            x0_temp, len(samples))
+                samples_x0 = self.samples_x0
+
+            push_forwards = np.zeros((len(samples),
+                                      len(ts), self.n_states))
+            with alive_bar(len(samples),
+                           title='Solving model sample set:',
+                           force_tty=True, receipt=True, length=20) as bar:
+                for j, s in enumerate(samples):
+                    push_forwards[j, :, :] = self.forward_model(
+                        samples_x0[j], ts, tuple(s))
+                    bar()
+
+            if self.hot_starts:
+                self.samples_x0[:] = self.get_initial_condition(
+                        self.x0, len(samples))
+            else:
+                self.samples_x0 = push_forwards[:, sample_ts_flag[-1], :]
+
         # Store everything in state DF
         state_df = pd.DataFrame(ts, columns=['ts'])
         state_df['shift_idx'] = shift_idx
         state_df['sample_flag'] = sample_ts_flag
-        state_df = self._put_df(state_df, 'true_param', param_vals)
-        state_df = self._put_df(state_df, 'true_vals', true_vals, typ='state')
-        state_df = self._put_df(state_df, 'obs_vals', measurements, typ='state')
+        state_df = put_df(state_df, 'true_param', param_vals)
+        state_df = put_df(state_df, 'true_vals', true_vals, size=self.n_states)
+        state_df = put_df(state_df, 'obs_vals',
+                          measurements, size=self.n_states)
 
         self.push_forwards = push_forwards
         self.state_df = state_df
 
-        return state_df, push_forwards
+    def mud_args(self,
+                 t1,
+                 samples=None,
+                 num_samples=1000,
+                 diff=0.5,
+                 weights=None,
+                 ):
+        """
+        """
+        # samples: (1) user defined (2) previously initialized (3) uniform dist
+        if samples is None:
+            if self.samples is None:
+                self.samples = self.get_uniform_initial_samples(
+                        scale=diff,
+                        num_samples=num_samples)
+        else:
+            self.samples = samples
+        self.forward_solve(t1, samples=self.samples)
+
+        # Build arguments for building MUD problem argument
+        q_lam = np.array(self.push_forwards[:, np.where(
+            self.state_df['sample_flag'].values), :]).reshape(
+                    self.n_samples, -1)
+        data = get_df(self.state_df.loc[self.state_df['sample_flag']],
+                      'obs_vals', size=2)
+        data = data.reshape(-1, 1)
+        num_ts = self.state_df['sample_flag'].sum()
+        args = {'samples': self.samples,
+                'q_lam': q_lam,
+                'data': data,
+                'std_dev': self.measurement_noise,
+                'max_nc': self.n_params if self.n_params <= num_ts else num_ts
+                }
+
+        return args
 
     def get_initial_condition(self,
                               x0,
@@ -192,4 +232,24 @@ class DynamicModel():
                                           self.measurement_noise),
                                 (num_samples, self.n_states))
         return init_conds
+
+    def get_uniform_initial_samples(
+            self,
+            scale=0.5,
+            num_samples=1000):
+        """
+        Generate initial samples from uniform distribution over domain set by
+        `self.set_domain`.
+        """
+        domain = get_uniform_box(
+            self.true_param, factor=scale,
+            mins=self.param_mins, maxs=self.param_maxs
+        )
+        loc = domain[:, 0]
+        scale = domain[:, 1] - domain[:, 0]
+        logger.info(f"Drawing {num_samples} from uniform at:\n" +
+                    f"\tloc: {loc}\n\tscale: {scale}")
+        samples = uniform.rvs(loc=loc, scale=scale,
+                              size=(num_samples, self.n_params))
+        return samples
 
