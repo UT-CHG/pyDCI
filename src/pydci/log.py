@@ -1,3 +1,11 @@
+"""
+pyDCI Logging Module
+
+pyDCI uses `Link loguru <https://loguru.readthedocs.io/en/stable/index.html>`_
+in combination with `Link rich <https://github.com/Textualize/rich>`_ to do
+logging in a nice and conise way. By default logging is disabled, but can
+be enable by importing the :func: `enable_log` to turn logging on.
+"""
 from loguru import logger
 from rich.console import Console
 from rich.logging import RichHandler
@@ -5,8 +13,21 @@ from rich.text import Text
 
 
 def log_table(rich_table):
-    """Generate an ascii formatted presentation of a Rich table
-    Eliminates any column styling
+    """
+    Log rich table
+
+    Generate an ascii formatted presentation of a Rich table eliminates
+    any column styling. This function is to be used for logging a table that
+    to loguru that is created by rich table.
+
+    Parameters
+    ----------
+    rich_table: rich.Table
+        rich table to output to file.
+
+    Returns
+    -------
+    Text to output to loguru logging handler.
     """
     console = Console(width=70)
     with console.capture() as capture:
@@ -17,6 +38,20 @@ def log_table(rich_table):
 def enable_log(file=None, level="INFO", fmt=None, serialize=False):
     """
     Turn on logging for module with appropriate message format
+
+    Parameters
+    ----------
+    file: str, optional
+        If specified, name of file to log output to. If none specified, then
+        logging is done to stdout.
+    level: str, default="INFO"
+        `Link log-level <https://docs.python.org/3/library/logging.html>`_ to
+        use. Max is "DEBUG". Minimum is "CRITICAL"
+    fmt: str, default=NONE
+        Format to use for logging, in logguru's simplified syntax. See loguru
+        documentation for more info.
+    serialize: bool, default=False
+        If set to True, output log in json form.
     """
     if file is None:
         fmt = "{message}" if fmt is None else fmt
@@ -53,4 +88,4 @@ def disable_log():
     return logger
 
 
-logger = disable_log()
+_ = disable_log()

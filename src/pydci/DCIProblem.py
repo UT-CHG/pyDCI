@@ -16,14 +16,13 @@ from pydci.utils import fit_domain, put_df, set_shape
 
 class DCIProblem(object):
     """
-    Sets up Data-Consistent Inverse Problem for parameter identification
+    Data Consistent Inversion Problem
 
-    Data-Consistent inversion is a way to infer most likely model parameters
-    using observed data and predicted data from the model.
+    Solves a Data-Consistent Inversion Problem as formulated first in [1].
 
     Attributes
     ----------
-    samples : ArrayLike
+    lam: ArrayLike
         Array containing parameter samples from an initial distribution.
         Rows represent each sample while columns represent parameter values.
         If 1 dimensional input is passed, assumed that it represents repeated
@@ -41,6 +40,13 @@ class DCIProblem(object):
         one set of weights is to be incorporated. If so the weights will be
         multiplied and normalized row-wise, so the number of columns must
         match the number of samples.
+
+    References
+    ----------
+    [1] T. Butler, J. Jakeman, and T. Wildey, “Combining Push-Forward Measures
+    and Bayes’ Rule to Construct Consistent Solutions to Stochastic Inverse
+    Problems,” SIAM J. Sci. Comput., vol. 40, no. 2, pp. A984–A1011, Jan. 2018,
+    doi: 10.1137/16M1087229.
     """
 
     def __init__(

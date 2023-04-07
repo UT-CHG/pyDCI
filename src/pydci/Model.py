@@ -13,7 +13,7 @@ from pydci.utils import add_noise, get_df, get_uniform_box, put_df
 
 class DynamicModel:
     """
-    Class defining a model for parameter estimation
+    Class defining a model for inverse problems. The model
 
     Attributes
     ----------
@@ -35,7 +35,6 @@ class DynamicModel:
         measurement_noise=0.05,
         solve_ts=0.2,
         sample_ts=1,
-        diff=0.5,
         hot_starts=True,
         param_mins=None,
         param_maxs=None,
@@ -54,6 +53,10 @@ class DynamicModel:
         self.param_shifts = {} if param_shifts is None else param_shifts
         self.param_mins = param_mins
         self.param_maxs = param_maxs
+
+        self.samples = None
+        self.states = []
+        self.push_forwards = []
 
     @property
     def n_params(self) -> int:
@@ -180,39 +183,34 @@ class DynamicModel:
         state_df = put_df(state_df, "true_vals", true_vals, size=self.n_states)
         state_df = put_df(state_df, "obs_vals", measurements, size=self.n_states)
 
-        self.push_forwards = push_forwards
-        self.state_df = state_df
+        self.samples.append(samples)
+        self.push_forwards.append(push_forwards)
+        self.states.append(state_df)
 
-    def mud_args(
-        self,
-        t1,
-        samples=None,
-        num_samples=1000,
-        diff=0.5,
-        weights=None,
+    def get_mud_args(
+            self,
+            it=-1,
+            samples=None,
+            num_samples=1000,
+            diff=0.5,
+            weights=None,
     ):
         """ """
-        # samples: (1) user defined (2) previously initialized (3) uniform dist
-        if samples is None:
-            if self.samples is None:
-                self.samples = self.get_uniform_initial_samples(
-                    scale=diff, num_samples=num_samples
-                )
-        else:
-            self.samples = samples
-        self.forward_solve(t1, samples=self.samples)
-
+        if len(self.states) == 0:
+            raise ValueError('No data to return. run solve first')
         # Build arguments for building MUD problem argument
+        state = self.states[it]
+        pfs = self.push_forwards[it]
         q_lam = np.array(
-            self.push_forwards[:, np.where(self.state_df["sample_flag"].values), :]
+            pfs[:, np.where(state["sample_flag"].values), :]
         ).reshape(self.n_samples, -1)
         data = get_df(
-            self.state_df.loc[self.state_df["sample_flag"]], "obs_vals", size=2
+            state.loc[state["sample_flag"]], "obs_vals", size=2
         )
         data = data.reshape(-1, 1)
-        num_ts = self.state_df["sample_flag"].sum()
+        num_ts = state["sample_flag"].sum()
         args = {
-            "samples": self.samples,
+            "lam": self.samples[-1],
             "q_lam": q_lam,
             "data": data,
             "std_dev": self.measurement_noise,
@@ -250,3 +248,32 @@ class DynamicModel:
         )
         samples = uniform.rvs(loc=loc, scale=scale, size=(num_samples, self.n_params))
         return samples
+
+    def iterative_solve(
+            self,
+            time_windows,
+            num_samples=1000,
+            diff=0.5,
+    ):
+        """
+        Iterative Solver
+
+        Iterative between solving and pushing model forward using sequential
+        MUD algorithm for parameter estimation.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+
+        Note
+        ----
+        This will reset the state of the class and erase its previous dataframes.
+        """
+        # TODO: Complete
+        # init_samples = self.get_uniform_initial_samples(
+        #     scale=diff, num_samples=num_samples
+        # )
+        # forward_solve(t1, samples=self.samples)
+        pass

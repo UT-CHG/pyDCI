@@ -1,15 +1,12 @@
 """
-PyDCI Utils
+pyDCI Utilities
 
 """
-import pdb
 from typing import List, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
-
-from pydci.log import logger
 
 
 def add_noise(signal: ArrayLike, sd: float = 0.05, seed: int = None):
@@ -53,20 +50,6 @@ def add_noise(signal: ArrayLike, sd: float = 0.05, seed: int = None):
     noise = np.random.randn(signal.size) * sd
 
     return signal + noise
-
-
-def rank_decomposition(A: np.typing.ArrayLike) -> List[np.ndarray]:
-    """Build list of rank k updates of A"""
-    A = np.array(A)
-    A_ranks = []
-    rank_1_updates = []
-    u, s, v = np.linalg.svd(A)
-    A_ranks.append(s[0] * (u[:, 0].reshape(-1, 1)) @ v[:, 0].reshape(1, -1))
-    for i in range(1, A.shape[1]):
-        rank_1_updates.append(s[i] * (u[:, i].reshape(-1, 1)) @ v[:, i].reshape(1, -1))
-        A_ranks.append(sum(rank_1_updates[0:i]))
-
-    return A_ranks
 
 
 def fit_domain(

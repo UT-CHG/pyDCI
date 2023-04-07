@@ -68,7 +68,8 @@ def _parse_title(
 
 def plot_state_data(
     self,
-    states,
+    state_col,
+    state_idx=0,
     time_col="ts",
     meas_col=None,
     plot_push_forwards=True,
@@ -77,6 +78,7 @@ def plot_state_data(
     markersize=100,
     save=False,
     file_name=None,
+    figsize= (9, 8),
 ):
     """
     Plot the X and Y data on two subplots, and add a rectangle for
@@ -91,7 +93,6 @@ def plot_state_data(
     sns.despine(offset=5)
 
     # Plot each column (state) of data on a separate subplot
-    for i in range(number_states):
         column_name = f"true_vals_{i}"
         obs_col_name = f"obs_vals_{i}"
         column_df = state_df[["ts", column_name, obs_col_name, "iteration"]].copy()
