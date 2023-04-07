@@ -5,9 +5,10 @@ PyDCI Utils
 import pdb
 from typing import List, Tuple, Union
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from numpy.typing import ArrayLike
+
 from pydci.log import logger
 
 
@@ -138,22 +139,24 @@ def get_uniform_box(center, factor=0.5, mins=None, maxs=None):
 
     return domain
 
+
 def put_df(df, name, val, size=1):
     """
     Given an n-m dimensional `val`, stores into dataframe `df` with `n`
     rows by unpacking the `m` columns of val into separate columns with
     names `{name}_{j}` where j is the index of the column.
     """
-    if len([x for x in df.columns if x.startswith(f'{name}_')]) > 0:
+    if len([x for x in df.columns if x.startswith(f"{name}_")]) > 0:
         for idx in range(size):
-            df[f'{name}_{idx}'] = val[:, idx]
+            df[f"{name}_{idx}"] = val[:, idx]
     else:
         concat_cols = {}
         for idx in range(size):
-            concat_cols[f'{name}_{idx}'] = val[:, idx]
+            concat_cols[f"{name}_{idx}"] = val[:, idx]
         df = pd.concat([df, pd.DataFrame(concat_cols)], axis=1)
 
     return df
+
 
 def get_df(df, name, size=1):
     """
@@ -163,5 +166,5 @@ def get_df(df, name, size=1):
     """
     val = np.zeros((df.shape[0], size))
     for idx in range(size):
-        val[:, idx] = df[f'{name}_{idx}'].values
+        val[:, idx] = df[f"{name}_{idx}"].values
     return val

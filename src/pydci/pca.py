@@ -100,4 +100,3 @@ def pca(data: ArrayLike, n_components: int = 2, **kwargs) -> Tuple[PCA, np.ndarr
     X_train = pca.fit_transform(sc.fit_transform(data))
 
     return pca, X_train
-

@@ -1,18 +1,17 @@
-from typing import Callable, List, Optional, Union
 import pdb
+from typing import Callable, List, Optional, Union
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from numpy.typing import ArrayLike
+from scipy.stats import rv_continuous  # type: ignore
 from scipy.stats import entropy
 from scipy.stats import gaussian_kde as gkde  # type: ignore
-from scipy.stats import rv_continuous  # type: ignore
-
-from pydci.utils import fit_domain, set_shape, put_df
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 from pydci.log import logger
+from pydci.utils import fit_domain, put_df, set_shape
 
 
 class DCIProblem(object):
@@ -43,6 +42,7 @@ class DCIProblem(object):
         multiplied and normalized row-wise, so the number of columns must
         match the number of samples.
     """
+
     def __init__(
         self,
         lam,
@@ -53,10 +53,12 @@ class DCIProblem(object):
         normalize: bool = False,
     ):
         self.init_state(lam, q_lam)
-        self.dists = {'initial': init_dist,
-                      'predicted': None,
-                      'observed': obs_dist,
-                      'updated': None}
+        self.dists = {
+            "initial": init_dist,
+            "predicted": None,
+            "observed": obs_dist,
+            "updated": None,
+        }
 
         # Initialize weights
         self.set_weights(weights, normalize=normalize)
@@ -79,12 +81,12 @@ class DCIProblem(object):
     def pi_up(self):
         """Updated Distribution"""
         # Compute udpated density
-        if self.dists['updated'] is None:
-            self.dists['updated'] = gkde(
-                    self.lam.T,
-                    weights=self.state['ratio'] * self.state['weight'])
+        if self.dists["updated"] is None:
+            self.dists["updated"] = gkde(
+                self.lam.T, weights=self.state["ratio"] * self.state["weight"]
+            )
 
-        return self.dists['updated']
+        return self.dists["updated"]
 
     def init_state(self, lam, q_lam):
         """
@@ -93,13 +95,13 @@ class DCIProblem(object):
         self.lam = set_shape(np.array(lam), (1, -1))
         self.q_lam = set_shape(np.array(q_lam), (-1, 1))
         self.state = pd.DataFrame(
-                np.zeros((self.n_samples, self.n_params + self.n_states + 6)),
-                columns=['weight', 'pi_in', 'pi_pr',
-                         'pi_obs', 'ratio', 'pi_up'] +
-                [f'lam_{i}' for i in range(self.n_params)] +
-                [f'q_lam_{i}' for i in range(self.n_states)])
-        self.state = put_df(self.state, 'q_lam', self.q_lam, size=self.n_states)
-        self.state = put_df(self.state, 'lam', self.lam, size=self.n_params)
+            np.zeros((self.n_samples, self.n_params + self.n_states + 6)),
+            columns=["weight", "pi_in", "pi_pr", "pi_obs", "ratio", "pi_up"]
+            + [f"lam_{i}" for i in range(self.n_params)]
+            + [f"q_lam_{i}" for i in range(self.n_states)],
+        )
+        self.state = put_df(self.state, "q_lam", self.q_lam, size=self.n_states)
+        self.state = put_df(self.state, "lam", self.lam, size=self.n_params)
 
     def set_weights(self, weights: ArrayLike = None, normalize: bool = False):
         """Set Sample Weights
@@ -144,12 +146,13 @@ class DCIProblem(object):
             if normalize:
                 w = np.divide(w, np.linalg.norm(w))
 
-        self.state['weight'] = w
+        self.state["weight"] = w
 
-    def set_initial(self,
-                    distribution: Optional[rv_continuous] = None,
-                    bw_method: Union[str, Callable, np.generic] = None,
-                    ):
+    def set_initial(
+        self,
+        distribution: Optional[rv_continuous] = None,
+        bw_method: Union[str, Callable, np.generic] = None,
+    ):
         """
         Set initial probability distribution of model parameter values
         :math:`\\pi_{in}(\\lambda)`.
@@ -169,11 +172,11 @@ class DCIProblem(object):
         distributions, so make sure to set the initial first.
         """
         if distribution is None:
-            self.dists['initial'] = gkde(self.lam.T,
-                                         bw_method=bw_method,
-                                         weights=self.state['weight'])
+            self.dists["initial"] = gkde(
+                self.lam.T, bw_method=bw_method, weights=self.state["weight"]
+            )
         else:
-            self.dists['initial'] = distribution
+            self.dists["initial"] = distribution
 
     def set_predicted(
         self,
@@ -227,10 +230,10 @@ class DCIProblem(object):
 
         if distribution is None:
             # Reweight kde of predicted by weights if present
-            distribution = gkde(self.q_lam.T,
-                                bw_method=bw_method,
-                                weights=self.state['weight'])
-        self.dists['predicted'] = distribution
+            distribution = gkde(
+                self.q_lam.T, bw_method=bw_method, weights=self.state["weight"]
+            )
+        self.dists["predicted"] = distribution
 
     def _update(self):
         """
@@ -255,35 +258,29 @@ class DCIProblem(object):
         Returns
         -----------
         """
-        if self.dists['initial'] is None:
+        if self.dists["initial"] is None:
             self.set_initial()
-        if self.dists['predicted'] is None:
+        if self.dists["predicted"] is None:
             self.set_predicted()
 
-        self.state['pi_in'] = self.dists['initial'].pdf(
-                self.lam.T).T
-        self.state['pi_obs'] = self.dists['observed'].pdf(
-                self.q_lam).prod(axis=1)
-        self.state['pi_pr'] = self.dists['predicted'].pdf(
-                self.q_lam.T).T.ravel()
+        self.state["pi_in"] = self.dists["initial"].pdf(self.lam.T).T
+        self.state["pi_obs"] = self.dists["observed"].pdf(self.q_lam).prod(axis=1)
+        self.state["pi_pr"] = self.dists["predicted"].pdf(self.q_lam.T).T.ravel()
 
         # Store ratio of observed/predicted
         # e.g. to comptue E(r) and to pass on to future iterations
-        self.state['ratio'] = np.divide(self.state['pi_obs'],
-                                        self.state['pi_pr'])
+        self.state["ratio"] = np.divide(self.state["pi_obs"], self.state["pi_pr"])
 
         # Multiply by initial to get updated pdf
-        self.state['pi_up'] = np.multiply(
-                self.state['pi_in'] * self.state['weight'],
-                self.state['ratio'])
+        self.state["pi_up"] = np.multiply(
+            self.state["pi_in"] * self.state["weight"], self.state["ratio"]
+        )
 
     def solve(self):
-        """
-
-        """
+        """ """
         self._update()
 
-        results_cols = ['e_r', 'kl']
+        results_cols = ["e_r", "kl"]
         results = np.zeros((1, 2))
         results[0, 0] = self.expected_ratio()
         results[0, 1] = self.divergence_kl()
@@ -314,7 +311,7 @@ class DCIProblem(object):
         expected_ratio : float
             Value of the E(r). Should be close to 1.0.
         """
-        return np.average(self.state['ratio'], weights=self.state['weight'])
+        return np.average(self.state["ratio"], weights=self.state["weight"])
 
     def divergence_kl(self):
         """KL-Divergence Between observed and predicted.
@@ -327,7 +324,7 @@ class DCIProblem(object):
         kl: float
             Value of the kl divergence.
         """
-        return entropy(self.state['pi_obs'], self.state['pi_pr'])
+        return entropy(self.state["pi_obs"], self.state["pi_pr"])
 
     def sample_update(self, num_samples):
         """Updated Distribution
@@ -357,7 +354,7 @@ class DCIProblem(object):
         self,
         ax=None,
         param_idx=0,
-        ratio_col='ratio',
+        ratio_col="ratio",
         plot_initial=False,
         plot_legend=True,
         figsize=(8, 8),
@@ -376,26 +373,26 @@ class DCIProblem(object):
 
         pi_up_label = f"$\pi^{{up}}_{{\lambda_{param_idx}}}$"
         sns.kdeplot(
-                data=self.state,
-                x=f'lam_{param_idx}',
-                ax=ax,
-                fill=True,
-                color=bright_colors[param_idx],
-                label=pi_up_label,
-                weights=self.state['weight'] * self.state[ratio_col],
+            data=self.state,
+            x=f"lam_{param_idx}",
+            ax=ax,
+            fill=True,
+            color=bright_colors[param_idx],
+            label=pi_up_label,
+            weights=self.state["weight"] * self.state[ratio_col],
         )
         labels.append(pi_up_label)
         if plot_initial:
             pi_in_label = f"$\pi^{{in}}_{{\lambda_{param_idx}}}$"
             sns.kdeplot(
                 data=self.state,
-                x=f'lam_{param_idx}',
+                x=f"lam_{param_idx}",
                 ax=ax,
                 fill=True,
                 color=bright_colors[param_idx],
-                linestyle=':',
+                linestyle=":",
                 label=pi_in_label,
-                weights='weight',
+                weights="weight",
             )
             labels.append(pi_in_label)
 
@@ -419,8 +416,8 @@ class DCIProblem(object):
         plot_pf=True,
         plot_obs=True,
         plot_legend=True,
-        obs_col='q_lam',
-        ratio_col='ratio',
+        obs_col="q_lam",
+        ratio_col="ratio",
         figsize=(6, 6),
     ):
         """
@@ -439,37 +436,37 @@ class DCIProblem(object):
         pr_label = "$\pi^{{pr}}_{{Q(\lambda)_{state_idx}}}$"
         sns.kdeplot(
             data=self.state,
-            x=f'{obs_col}_{state_idx}',
+            x=f"{obs_col}_{state_idx}",
             ax=ax,
             fill=True,
             color=bright_colors[state_idx],
             label=pr_label,
-            weights=self.state['weight'],
+            weights=self.state["weight"],
         )
         labels.append(pr_label)
         if plot_pf:
             pf_label = f"$\pi^{{pf}}_{{Q(\lambda)_{state_idx}}}$"
             sns.kdeplot(
                 data=self.state,
-                x=f'{obs_col}_{state_idx}',
+                x=f"{obs_col}_{state_idx}",
                 ax=ax,
                 fill=True,
                 color=bright_colors[state_idx],
-                linestyle=':',
+                linestyle=":",
                 label=pf_label,
-                weights=self.state['weight'] * self.state[ratio_col],
+                weights=self.state["weight"] * self.state[ratio_col],
             )
             labels.append(pf_label)
 
-        # TODO: How to plot this using SNS? 
+        # TODO: How to plot this using SNS?
         if plot_obs:
             obs_label = "$\pi^{{obs}}_{{Q(\lambda)}}$"
             obs_domain = ax.get_xlim()
             obs_x = np.linspace(obs_domain[0], obs_domain[1], 10000)
             obs_x_marginal = np.zeros((len(obs_x), self.n_states))
             obs_x_marginal[:, state_idx] = obs_x
-            obs = self.dists['observed'].pdf(obs_x_marginal)[:, state_idx]
-            ax.plot(obs_x, obs, color='r', label=obs_label)
+            obs = self.dists["observed"].pdf(obs_x_marginal)[:, state_idx]
+            ax.plot(obs_x, obs, color="r", label=obs_label)
             labels.append(obs_label)
 
         # Set plot specifications
@@ -484,15 +481,54 @@ class DCIProblem(object):
 
         return ax, labels
 
+    def state_plot(
+        self, state="q_lam_0", mask=None, x_col=None, ax=None, figsize=(8, 8), **kwargs
+    ):
+        """
+        Plot the X and Y data on two subplots, and add a rectangle for
+        each interval to each subplot.
+        """
+        # Set up the figure and axes
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+        sns.color_palette("bright")
+
+        sns.scatterplot(
+            x=self.state.index if x_col is None else x_col,
+            y=state,
+            ax=ax,
+            color="blue",
+            data=self.state,
+            label="State",
+        )
+
+        return ax
+
+    def density_plots(
+        self,
+        true_vals=None,
+        figsize=(14, 6),
+    ):
+        """
+        Plot param and observable space onto sampe plot
+        """
+        fig, axs = plt.subplots(1, 2, figsize=(14, 6))
+        self.plot_param_state(true_vals=true_vals, ax=axs[0])
+        self.plot_obs_state(ax=axs[1])
+        fig.suptitle(self._parse_title())
+        fig.tight_layout()
+
+        return axs
+
     def _parse_title(
         self,
-      ):
+    ):
         """
         Parse Title
         """
-        kl = self.result['kl'].values[0]
-        e_r = self.result['e_r'].values[0]
-        title = (f"$\mathbb{{E}}(r)$= {e_r:.3f}, " +
-                 f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}")
+        kl = self.result["kl"].values[0]
+        e_r = self.result["e_r"].values[0]
+        title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
 
         return title

@@ -3,19 +3,21 @@ Sequential MUD Estimation Algorithms
 
 """
 
-import random
-import itertools
 import concurrent.futures
+import itertools
+import random
+
 import numpy as np
 import pandas as pd
-from scipy.stats import gaussian_kde as gkde
-from scipy.stats import uniform, entropy
 from alive_progress import alive_bar
+from loguru import logger
+from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
 from rich.text import Text
-from rich.console import Console
-from loguru import logger
+from scipy.stats import entropy
+from scipy.stats import gaussian_kde as gkde
+from scipy.stats import uniform
 
 from pydci.SpatioTemporalAggregator import SpatioTemporalAggregator as STP
 
@@ -30,25 +32,33 @@ def log_table(rich_table):
     return Text.from_ansi(capture.get())
 
 
-def enable_log(file=None, level='INFO', fmt=None, serialize=False):
+def enable_log(file=None, level="INFO", fmt=None, serialize=False):
     """
     Turn on logging for module with appropriate message format
     """
     if file is None:
         fmt = "{message}" if fmt is None else fmt
-        logger.configure(handlers=[
-            {"sink": RichHandler(markup=True, rich_tracebacks=True),
-             "level": level, "format": fmt}])
+        logger.configure(
+            handlers=[
+                {
+                    "sink": RichHandler(markup=True, rich_tracebacks=True),
+                    "level": level,
+                    "format": fmt,
+                }
+            ]
+        )
     else:
         def_fmt = "{message}"
         if not serialize:
             def_fmt = "{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}"
         fmt = def_fmt if fmt is None else fmt
-        logger.configure(handlers=[
-            {"sink": file, "serialize": serialize,
-             "level": level, "format": fmt}])
-    logger.enable('pydci')
-    logger.info('Logger initialized')
+        logger.configure(
+            handlers=[
+                {"sink": file, "serialize": serialize, "level": level, "format": fmt}
+            ]
+        )
+    logger.enable("pydci")
+    logger.info("Logger initialized")
 
     return logger
 
@@ -57,7 +67,7 @@ def disable_log():
     """
     Turn of logging
     """
-    logger.disable('pydci')
+    logger.disable("pydci")
 
 
 def _try_mud(spt, nc=1, times_mask=None, weights=None):
@@ -82,7 +92,7 @@ def _try_mud(spt, nc=1, times_mask=None, weights=None):
     return mud_prob
 
 
-class SequentialDensityProblem():
+class SequentialDensityProblem:
     """
     Class defining a SequentialDensity Problem for parameter estimation on.
 
@@ -101,21 +111,22 @@ class SequentialDensityProblem():
         True parameter value for creating the reference data using the passed
         in forward_model.
     """
-    def __init__(self,
-                 forward_model,
-                 x0,
-                 true_param,
-                 measurement_noise=0.05,
-                 solve_ts=0.2,
-                 sample_ts=1,
-                 diff=0.5,
-                 hot_starts=True,
-                 param_mins=None,
-                 param_maxs=None,
-                 param_shifts=None,
-                 search_params={}
-                 ):
 
+    def __init__(
+        self,
+        forward_model,
+        x0,
+        true_param,
+        measurement_noise=0.05,
+        solve_ts=0.2,
+        sample_ts=1,
+        diff=0.5,
+        hot_starts=True,
+        param_mins=None,
+        param_maxs=None,
+        param_shifts=None,
+        search_params={},
+    ):
         self.forward_model = forward_model
         self.x0 = x0
         self.true_param = true_param
@@ -123,46 +134,44 @@ class SequentialDensityProblem():
         self.solve_ts = solve_ts
         self.sample_ts = sample_ts
         self.hot_starts = hot_starts
-        self.set_domain(diff=diff,
-                        param_mins=param_mins,
-                        param_maxs=param_maxs)
+        self.set_domain(diff=diff, param_mins=param_mins, param_maxs=param_maxs)
         self.param_shifts = {} if param_shifts is None else param_shifts
 
         self.search_params = {
-            'nc': 1,
-            'method': 'all',
-            'best': 'closest',
-            'max_tries': 10,
-            'exp_thresh': 1e10,
-            'mean_exp_delta_thresh': None,
-            'kl_thresh_factor': None,
-            'reweight': True,
-            'resample': True,
-            'min_weight_thresh': 0.0,
+            "nc": 1,
+            "method": "all",
+            "best": "closest",
+            "max_tries": 10,
+            "exp_thresh": 1e10,
+            "mean_exp_delta_thresh": None,
+            "kl_thresh_factor": None,
+            "reweight": True,
+            "resample": True,
+            "min_weight_thresh": 0.0,
         }
         self.search_params.update(search_params)
 
-    def _put_df(self, df, name, val, typ='param'):
+    def _put_df(self, df, name, val, typ="param"):
         """
         Given an n-m dimensional `val`, stores into dataframe `df` with `n`
         rows by unpacking the `m` columns of val into separate columns with
         names `{name}_{j}` where j is the index of the column.
         """
-        size = self.n_params if typ == 'param' else self.n_states
+        size = self.n_params if typ == "param" else self.n_states
         for idx in range(size):
-            df[f'{name}_{idx}'] = val[:, idx]
+            df[f"{name}_{idx}"] = val[:, idx]
         return df
 
-    def _get_df(self, df, name, typ='param'):
+    def _get_df(self, df, name, typ="param"):
         """
         Gets an n-m dimensional `val` from `df` with `n` columns by retrieving
         the `m` columns of val into from columns of `df` with names `{name}_{j}`
         where j is the index of the column.
         """
-        size = self.n_params if typ == 'param' else self.n_states
+        size = self.n_params if typ == "param" else self.n_states
         val = np.zeros((df.shape[0], size))
         for idx in range(size):
-            val[:, idx] = df[f'{name}_{idx}'].values
+            val[:, idx] = df[f"{name}_{idx}"].values
         return val
 
     @property
@@ -196,11 +205,7 @@ class SequentialDensityProblem():
 
         return domain
 
-    def set_domain(self,
-                   domain=None,
-                   diff=0.5,
-                   param_mins=None,
-                   param_maxs=None):
+    def set_domain(self, domain=None, diff=0.5, param_mins=None, param_maxs=None):
         """
         Set domain over parameter space to search over during the sequential
         estimation algorithm. A `domain` can be explicitly specified. Otherwise,
@@ -217,18 +222,18 @@ class SequentialDensityProblem():
             self.domain = domain
         logger.info(f"Initialized uniform domain:\n{self.domain}")
 
-    def get_initial_samples(self,
-                            num_samples=1000):
+    def get_initial_samples(self, num_samples=1000):
         """
         Generate initial samples from uniform distribution over domain set by
         `self.set_domain`.
         """
         loc = self.domain[:, 0]
         scale = self.domain[:, 1] - self.domain[:, 0]
-        logger.info(f"Drawing {num_samples} from uniform at:\n" +
-                    f"\tloc: {loc}\n\tscale: {scale}")
-        samples = uniform.rvs(loc=loc, scale=scale,
-                              size=(num_samples, self.n_params))
+        logger.info(
+            f"Drawing {num_samples} from uniform at:\n"
+            + f"\tloc: {loc}\n\tscale: {scale}"
+        )
+        samples = uniform.rvs(loc=loc, scale=scale, size=(num_samples, self.n_params))
         return samples
 
     def get_param_intervals(self):
@@ -290,17 +295,21 @@ class SequentialDensityProblem():
             idxs = shift_idx == i
             times = ts[idxs]
             true_param = param_vals[idxs, :][0]
-            true_vals[idxs] = self.forward_model(
-              x0, times, tuple(true_param))
+            true_vals[idxs] = self.forward_model(x0, times, tuple(true_param))
             x0 = true_vals[idxs][-1]
         self.x0 = x0
 
-        with alive_bar(len(self.samples),
-                       title=f'Iteration {self.iteration} - Forward Solves:',
-                       force_tty=True, receipt=False, length=20) as bar:
+        with alive_bar(
+            len(self.samples),
+            title=f"Iteration {self.iteration} - Forward Solves:",
+            force_tty=True,
+            receipt=False,
+            length=20,
+        ) as bar:
             for j, s in enumerate(self.samples):
                 push_forwards[j, :, :] = self.forward_model(
-                    self.samples_x0[j], ts, tuple(s))
+                    self.samples_x0[j], ts, tuple(s)
+                )
                 bar()
 
         if self.hot_starts:
@@ -329,49 +338,49 @@ class SequentialDensityProblem():
         measurements = np.empty((len(ts), self.n_states))
         measurements[:] = np.nan
         measurements[sample_ts_flag] = self.stp.measurements.reshape(
-                self.stp.n_ts, self.n_states)
+            self.stp.n_ts, self.n_states
+        )
 
         # Store everything in state DF
-        state_df = pd.DataFrame(ts, columns=['ts'])
-        state_df['iteration'] = self.iteration
-        state_df['shift_idx'] = shift_idx
-        state_df['sample_flag'] = sample_ts_flag
-        state_df = self._put_df(state_df, 'true_param', param_vals)
-        state_df = self._put_df(state_df, 'true_vals', true_vals, typ='state')
-        state_df = self._put_df(state_df, 'obs_vals', measurements, typ='state')
+        state_df = pd.DataFrame(ts, columns=["ts"])
+        state_df["iteration"] = self.iteration
+        state_df["shift_idx"] = shift_idx
+        state_df["sample_flag"] = sample_ts_flag
+        state_df = self._put_df(state_df, "true_param", param_vals)
+        state_df = self._put_df(state_df, "true_vals", true_vals, typ="state")
+        state_df = self._put_df(state_df, "obs_vals", measurements, typ="state")
 
         self.push_forwards = push_forwards
         self.state_df = state_df
 
-    def _get_ts_combinations(
-        self
-    ):
+    def _get_ts_combinations(self):
         """
         Utility function to determine sets of ts combinations to iterate through
         """
         n_ts = self.stp.n_ts
-        method = self.search_params['method']
+        method = self.search_params["method"]
 
-        if method == 'all':
+        if method == "all":
             combs = [list(np.arange(n_ts))]
-        elif method == 'linear':
+        elif method == "linear":
             combs = [list(np.arange(i)) for i in range(1, n_ts + 1)]
-        elif method == 'random':
-            max_tries = self.search_params['max_tries']
+        elif method == "random":
+            max_tries = self.search_params["max_tries"]
 
             # Divide the max#tries amongs the number of timesteps available
             if n_ts < max_tries:
                 num_ts_list = range(1, n_ts + 1)
-                tries_per = int(max_tries/n_ts)
+                tries_per = int(max_tries / n_ts)
             else:
-                num_ts_list = range(1, n_ts + 1, int(n_ts/max_tries))
+                num_ts_list = range(1, n_ts + 1, int(n_ts / max_tries))
                 tries_per = 1
 
             combs = []
             ts_choices = range(0, n_ts)
             for num_ts in num_ts_list:
-                possible = list([list(x) for x in itertools.combinations(
-                    ts_choices, num_ts)])
+                possible = list(
+                    [list(x) for x in itertools.combinations(ts_choices, num_ts)]
+                )
                 tries_per = tries_per if tries_per < len(possible) else len(possible)
                 combs += random.sample(possible, tries_per)
 
@@ -383,7 +392,7 @@ class SequentialDensityProblem():
         """
         Helper function for find_best_mud_estimate
         """
-        nc = self.search_params['nc']
+        nc = self.search_params["nc"]
 
         # Get combinations to iterate through
         combs = self._get_ts_combinations()
@@ -401,26 +410,25 @@ class SequentialDensityProblem():
             futures = []
             future_mapping = {}
             for arg in mud_args:
-                future = executor.submit(_try_mud,
-                                         arg[0], arg[1], arg[2], arg[3])
+                future = executor.submit(_try_mud, arg[0], arg[1], arg[2], arg[3])
                 future_mapping[future] = arg
                 futures.append(future)
             for future in concurrent.futures.as_completed(futures):
                 args = future_mapping[future]
                 mud_prob = future.result()
                 if mud_prob is None:
-                    logger.info('MUD problem using {args[2]} idxs failed!')
+                    logger.info("MUD problem using {args[2]} idxs failed!")
                     continue
                 probs.append(mud_prob)
                 ts_combinations[:, i + 1] = np.array(
-                    [0 if i not in args[2] else 1
-                     for i in range(self.stp.n_ts)])
-                results[i, 1:(self.n_params + 1)] = mud_prob.estimate()
+                    [0 if i not in args[2] else 1 for i in range(self.stp.n_ts)]
+                )
+                results[i, 1 : (self.n_params + 1)] = mud_prob.estimate()
                 results[i, self.n_params + 1] = np.linalg.norm(
-                    mud_prob.estimate() - self.true_param)
+                    mud_prob.estimate() - self.true_param
+                )
                 results[i, self.n_params + 2] = mud_prob.expected_ratio()
-                results[i, self.n_params + 3] = entropy(
-                    mud_prob._ob, mud_prob._pr)
+                results[i, self.n_params + 3] = entropy(mud_prob._ob, mud_prob._pr)
                 i += 1
 
         return probs, ts_combinations, results
@@ -435,57 +443,60 @@ class SequentialDensityProblem():
         up to nc principal components, and from 1 to stp.num_ts data points.
         Best e_r is characterized by that which is closest to 1.
         """
-        best = self.search_params['best']
-        exp_thresh = self.search_params['exp_thresh']
+        best = self.search_params["best"]
+        exp_thresh = self.search_params["exp_thresh"]
 
         probs, ts_combinations, results = self._search_mud_parallel()
 
         # Parse DataFrame with choices made in sampling of data
-        ts_columns = ['iteration'] + [f'{i}' for i in range(len(probs))]
+        ts_columns = ["iteration"] + [f"{i}" for i in range(len(probs))]
         ts_df = pd.DataFrame(ts_combinations, columns=ts_columns)
 
         # Parse DataFrame with results of mud estimations for each ts choice
-        results_cols = ['iteration']
-        results_cols += [f'lam_MUD_{i}' for i in range(self.n_params)]
-        results_cols += ['l2_err', 'e_r', 'kl']
+        results_cols = ["iteration"]
+        results_cols += [f"lam_MUD_{i}" for i in range(self.n_params)]
+        results_cols += ["l2_err", "e_r", "kl"]
         res_df = pd.DataFrame(results, columns=results_cols)
-        res_df['mean_e_r'] = res_df['e_r'].mean()
-        res_df['e_r_std'] = res_df['e_r'].std()
-        res_df['min_e_r'] = res_df['e_r'].min()
-        res_df['max_e_r'] = res_df['e_r'].max()
-        res_df['predict_delta'] = np.abs(res_df['e_r'] - 1.0)
-        res_df['within_thresh'] = res_df['predict_delta'] <= exp_thresh
+        res_df["mean_e_r"] = res_df["e_r"].mean()
+        res_df["e_r_std"] = res_df["e_r"].std()
+        res_df["min_e_r"] = res_df["e_r"].min()
+        res_df["max_e_r"] = res_df["e_r"].max()
+        res_df["predict_delta"] = np.abs(res_df["e_r"] - 1.0)
+        res_df["within_thresh"] = res_df["predict_delta"] <= exp_thresh
         # res_df['closest'] = res_df['predict_delta'] <= \
         #     res_df['predict_delta'].min()
-        res_df['closest'] = np.logical_and(
-            res_df['predict_delta'] <=
-            res_df[res_df['within_thresh']]['predict_delta'].min(),
-            res_df['within_thresh'])
-        res_df['max_kl'] = np.logical_and(
-            res_df['kl'] >= res_df[res_df['within_thresh']]['kl'].max(),
-            res_df['within_thresh'])
-        res_df['min_kl'] = np.logical_and(
-            res_df['kl'] <= res_df[res_df['within_thresh']]['kl'].min(),
-            res_df['within_thresh'])
+        res_df["closest"] = np.logical_and(
+            res_df["predict_delta"]
+            <= res_df[res_df["within_thresh"]]["predict_delta"].min(),
+            res_df["within_thresh"],
+        )
+        res_df["max_kl"] = np.logical_and(
+            res_df["kl"] >= res_df[res_df["within_thresh"]]["kl"].max(),
+            res_df["within_thresh"],
+        )
+        res_df["min_kl"] = np.logical_and(
+            res_df["kl"] <= res_df[res_df["within_thresh"]]["kl"].min(),
+            res_df["within_thresh"],
+        )
 
         # Determine best MUD estimate
-        am = ['closest', 'min_kl', 'max_kl']
+        am = ["closest", "min_kl", "max_kl"]
         if best not in am:
             raise ValueError(f"Unrecognized best method: {best}. Allowed: {am}")
 
         best_idx = res_df[best].argmax()
-        self.dfs['ts_choices'].append(ts_df)
-        self.dfs['results'].append(res_df)
+        self.dfs["ts_choices"].append(ts_df)
+        self.dfs["results"].append(res_df)
 
         res = {
             "best": probs[best_idx],
             "best_ts_choice": ts_df[f"{best_idx}"].values,
-            "best_l2_err": res_df.loc[best_idx]['l2_err'],
-            "best_kl": res_df.loc[best_idx]['kl'],
-            "mean_e_r": res_df['mean_e_r'].values[0],
-            "e_r_std": res_df['e_r_std'].values[0],
-            "min_e_r": res_df['min_e_r'].values[0],
-            "max_e_r": res_df['max_e_r'].values[0],
+            "best_l2_err": res_df.loc[best_idx]["l2_err"],
+            "best_kl": res_df.loc[best_idx]["kl"],
+            "mean_e_r": res_df["mean_e_r"].values[0],
+            "e_r_std": res_df["e_r_std"].values[0],
+            "min_e_r": res_df["min_e_r"].values[0],
+            "max_e_r": res_df["max_e_r"].values[0],
             "probs": probs,
         }
 
@@ -494,28 +505,27 @@ class SequentialDensityProblem():
     def _detect_shift(
         self,
     ):
-        """
-        """
-        mean_exp_delta_thresh = self.search_params['mean_exp_delta_thresh']
-        kl_thresh_factor = self.search_params['kl_thresh_factor']
+        """ """
+        mean_exp_delta_thresh = self.search_params["mean_exp_delta_thresh"]
+        kl_thresh_factor = self.search_params["kl_thresh_factor"]
 
         if len(self.mud_res) < 2:
             # Need at least two results to detect shifts.
             return False
-        elif self.mud_res[-2]['action'] == 'RESET':
+        elif self.mud_res[-2]["action"] == "RESET":
             return False
 
         shift = False
         # Mean condition - If significan shift in the mean exp_r value detected
         if mean_exp_delta_thresh is not None:
-            mean_e_r = self.dfs['results'][-1]['e_r'].mean()
-            prev_mean_e_r = self.dfs['results'][-2]['e_r'].mean()
+            mean_e_r = self.dfs["results"][-1]["e_r"].mean()
+            prev_mean_e_r = self.dfs["results"][-2]["e_r"].mean()
             if np.abs(prev_mean_e_r - mean_e_r) > mean_exp_delta_thresh:
                 shift = True
 
         # KL Div. Condition - If KL > 3.0 (3 std-dev since obs is N(0,1))
         if kl_thresh_factor is not None:
-            if self.dfs['results'][-1]['kl'].values[0] >= kl_thresh_factor:
+            if self.dfs["results"][-1]["kl"].values[0] >= kl_thresh_factor:
                 shift = True
 
         return shift
@@ -523,24 +533,22 @@ class SequentialDensityProblem():
     def _determine_action(
         self,
     ):
-        """
-        """
+        """ """
         # Get search parameters relevant for determining next step
-        exp_thresh = self.search_params['exp_thresh']
-        min_weight_thresh = self.search_params['min_weight_thresh']
-        resample = self.search_params['resample']
-        reweight = self.search_params['reweight']
+        exp_thresh = self.search_params["exp_thresh"]
+        min_weight_thresh = self.search_params["min_weight_thresh"]
+        resample = self.search_params["resample"]
+        reweight = self.search_params["reweight"]
 
-        best = self.mud_res[-1]['best']
+        best = self.mud_res[-1]["best"]
         best_e_r = best.expected_ratio()
-        res = {'action': 'NONE',
-               'weights': None}
+        res = {"action": "NONE", "weights": None}
         if self._detect_shift():
             # TODO: Add old logger call
-            logger.info(f'Shift detected at {self.iteration}')
+            logger.info(f"Shift detected at {self.iteration}")
             if resample:
-                res['samples'] = self.get_initial_samples()
-            res['action'] = 'RESET'
+                res["samples"] = self.get_initial_samples()
+            res["action"] = "RESET"
         elif np.abs(1.0 - best_e_r) <= exp_thresh:
             if reweight:
                 min_ratio = best._r.min()
@@ -550,26 +558,24 @@ class SequentialDensityProblem():
                         + f"{exp_thresh:0.2f}, reweight set, and "
                         + f"{min_ratio:.2e} >= {min_weight_thresh:.2e}"
                     )
-                    res['weights'] = best._r
-                    res['action'] = 'RE-WEIGHT'
+                    res["weights"] = best._r
+                    res["action"] = "RE-WEIGHT"
                 else:
                     logger.info(
-                        f"Reweight set but {min_ratio:.2e} < " +
-                        f"{min_weight_thresh:.2e}")
-            if resample and res['action'] != 'RE-WEIGHT':
-                logger.info(
-                    f"\tRe-Sampling: e_r within 1+-{exp_thresh:0.2f}")
-                res['up_dist'] = gkde(self.samples.T, weights=best._r)
-                res['samples'] = res['up_dist'].resample(
-                    size=len(self.samples)).T
-                res['action'] = 'UPDATE'
+                        f"Reweight set but {min_ratio:.2e} < "
+                        + f"{min_weight_thresh:.2e}"
+                    )
+            if resample and res["action"] != "RE-WEIGHT":
+                logger.info(f"\tRe-Sampling: e_r within 1+-{exp_thresh:0.2f}")
+                res["up_dist"] = gkde(self.samples.T, weights=best._r)
+                res["samples"] = res["up_dist"].resample(size=len(self.samples)).T
+                res["action"] = "UPDATE"
         else:
-            logger.info('No action taken!')
+            logger.info("No action taken!")
 
         return res
 
-    def iteration_update(self,
-                         num_samples_to_save=10):
+    def iteration_update(self, num_samples_to_save=10):
         """
         Update class attributes according to action determined per iteration.
         """
@@ -577,49 +583,48 @@ class SequentialDensityProblem():
         action = self._determine_action()
 
         # Add action taken to results df
-        self.dfs['results'][-1]['action'] = action['action']
+        self.dfs["results"][-1]["action"] = action["action"]
 
         # Add to full state DF
-        best_sample = np.argmax(self.mud_res[-1]['best']._up)
-        worst_sample = np.argmin(self.mud_res[-1]['best']._up)
+        best_sample = np.argmax(self.mud_res[-1]["best"]._up)
+        worst_sample = np.argmin(self.mud_res[-1]["best"]._up)
         if self.iteration == 0:
-            rand_idxs = random.choices(range(len(self.samples)),
-                                       k=num_samples_to_save)
+            rand_idxs = random.choices(range(len(self.samples)), k=num_samples_to_save)
             self.rand_idxs = rand_idxs
         else:
             rand_idxs = self.rand_idxs
 
-        state_df = self._put_df(self.state_df, 'best',
-                                self.push_forwards[best_sample],
-                                typ='state')
-        state_df = self._put_df(state_df, 'worst',
-                                self.push_forwards[worst_sample],
-                                typ='state')
+        state_df = self._put_df(
+            self.state_df, "best", self.push_forwards[best_sample], typ="state"
+        )
+        state_df = self._put_df(
+            state_df, "worst", self.push_forwards[worst_sample], typ="state"
+        )
         for idx in rand_idxs:
-            state_df = self._put_df(state_df, f'random_{idx}',
-                                    self.push_forwards[idx],
-                                    typ='state')
-        self.dfs['state'].append(state_df)
+            state_df = self._put_df(
+                state_df, f"random_{idx}", self.push_forwards[idx], typ="state"
+            )
+        self.dfs["state"].append(state_df)
 
         # Samples DF - Store parameter samples, associated weights and ratios
         # This DF should be sufficient to plot init/update distributions by
         # doing KDEs on the parameter values using the weights/ratios.
         samples_df = pd.DataFrame(
-                self.samples,
-                columns=[f'lam_{i}' for i in range(self.n_params)])
-        samples_df['ratio'] = self.mud_res[-1]['best']._r
-        samples_df['weights'] = self.mud_res[-1]['best']._weights
-        samples_df['up_weights'] = action['weights']
-        samples_df['iteration'] = self.iteration
-        self.dfs['samples'].append(samples_df)
+            self.samples, columns=[f"lam_{i}" for i in range(self.n_params)]
+        )
+        samples_df["ratio"] = self.mud_res[-1]["best"]._r
+        samples_df["weights"] = self.mud_res[-1]["best"]._weights
+        samples_df["up_weights"] = action["weights"]
+        samples_df["iteration"] = self.iteration
+        self.dfs["samples"].append(samples_df)
 
         # Update for next iteration
-        self.mud_res[-1]['action'] = action['action']
-        self.weights = action['weights']
-        if 'up_dist' in action.keys():
-            self.up_dist = action['up_dist']
-        if 'samples' in action.keys():
-            self.samples = action['samples']
+        self.mud_res[-1]["action"] = action["action"]
+        self.weights = action["weights"]
+        if "up_dist" in action.keys():
+            self.up_dist = action["up_dist"]
+        if "samples" in action.keys():
+            self.samples = action["samples"]
         self.iteration = self.iteration + 1
 
     def seq_solve(
@@ -649,45 +654,54 @@ class SequentialDensityProblem():
         self.mud_res = []
         self.up_dist = gkde(self.samples.T)
         self.dfs = {
-                'state': [],
-                'results': [],
-                'samples': [],
-                'ts_choices': [],
-                }
+            "state": [],
+            "results": [],
+            "samples": [],
+            "ts_choices": [],
+        }
 
-        logger.info(f'Solver init - {self.num_its} windows: {time_windows}')
+        logger.info(f"Solver init - {self.num_its} windows: {time_windows}")
         for i in range(len(self.time_windows) - 1):
-            logger.info(f'Iteration {self.iteration}.') 
+            logger.info(f"Iteration {self.iteration}.")
             self.forward_solve()
             self.mud_res.append(self.find_best_mud_estimate())
             self.iteration_update()
             logger.info(
-                f"Iteration {self.iteration}: " +
-                f"[{time_windows[self.iteration-1]}, " +
-                f"{time_windows[self.iteration]}] Summary:\n" +
-                f"{log_table(self.get_summary_row())}")
+                f"Iteration {self.iteration}: "
+                + f"[{time_windows[self.iteration-1]}, "
+                + f"{time_windows[self.iteration]}] Summary:\n"
+                + f"{log_table(self.get_summary_row())}"
+            )
 
     def get_summary_row(
-            self,
+        self,
     ):
-        """
-        """
-        fields = ['Iteration', 'Action', 'L_2', 'KL', 'Best(E(r))',
-                  'Mean(E(r))', 'std(E(r))']
+        """ """
+        fields = [
+            "Iteration",
+            "Action",
+            "L_2",
+            "KL",
+            "Best(E(r))",
+            "Mean(E(r))",
+            "std(E(r))",
+        ]
 
         table = Table(show_header=True, header_style="bold magenta")
-        cols = ['Key', 'Value']
+        cols = ["Key", "Value"]
         for c in cols:
             table.add_column(c)
 
         r = self.mud_res[-1]
-        row = (str(len(self.mud_res)),
-               f"{r['action']}",
-               f"{r['best_l2_err']:0.3f}",
-               f"{r['best_kl']:0.3f}",
-               f"{r['best'].expected_ratio():0.3f}",
-               f"{r['mean_e_r']:0.3f}",
-               f"{r['e_r_std']:0.3f}")
+        row = (
+            str(len(self.mud_res)),
+            f"{r['action']}",
+            f"{r['best_l2_err']:0.3f}",
+            f"{r['best_kl']:0.3f}",
+            f"{r['best'].expected_ratio():0.3f}",
+            f"{r['mean_e_r']:0.3f}",
+            f"{r['e_r_std']:0.3f}",
+        )
         for i in range(len(fields)):
             table.add_row(fields[i], row[i])
 
@@ -695,7 +709,7 @@ class SequentialDensityProblem():
 
     def get_full_df(
         self,
-        df='state',
+        df="state",
         iterations=None,
     ):
         """
@@ -703,7 +717,7 @@ class SequentialDensityProblem():
         """
 
         if df not in self.dfs.keys():
-            raise ValueError(f'{df} not one of {self.dfs.keys()}')
+            raise ValueError(f"{df} not one of {self.dfs.keys()}")
 
         dfs = self.dfs[df]
         if iterations is not None:

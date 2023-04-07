@@ -92,7 +92,6 @@ def monomial(
     else:
         data = norm.rvs(loc=mu, scale=sigma**2, size=N)
 
-
     return lam, q_lam, data
 
 
@@ -116,15 +115,12 @@ def identity_dci_prob(
     if init_dist == "uniform":
         init_dist = ds.uniform(loc=domain[0], scale=domain[1] - domain[0])
     lam, q_lam, data = monomial(
-        p=1, num_samples=num_samples, N=num_obs,
-        init_dist=init_dist, mu=mu, sigma=sigma
+        p=1, num_samples=num_samples, N=num_obs, init_dist=init_dist, mu=mu, sigma=sigma
     )
-    dci_prob = DCIProblem(lam, q_lam, domain,
-                          weights=weights, normalize=normalize)
+    dci_prob = DCIProblem(lam, q_lam, domain, weights=weights, normalize=normalize)
     dci_prob.set_initial(init_dist)
     dci_prob.set_observed(ds.norm(np.mean(data), sigma))
     if analytical_pred:
         D.set_predicted(init_dist)
 
     return D
-

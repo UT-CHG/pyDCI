@@ -73,7 +73,7 @@ lv_p2 = [
     0.1,  # delta - predator growth rate
 ]
 
-lv_param_mins = 4*[0.]
+lv_param_mins = 4 * [0.0]
 
 # TODO: Workout seeds -> Put ones to save in dictionaries
 # initial Measure Outcomes
@@ -86,6 +86,6 @@ lv_param_mins = 4*[0.]
 
 # lv1_initial_seed = np.random.randint(0, 10e5)
 # lv1_measurement_seed = np.random.randint(0, 10e5)
-# 
+#
 # lv1_initial_seed = 581506
 # lv1_measurement_seed =  895913

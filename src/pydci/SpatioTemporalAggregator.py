@@ -34,7 +34,6 @@ class SpatioTemporalAggregator(object):
     """
 
     def __init__(self, df=None):
-
         self._domain = None
         self._lam = None
         self._data = None
@@ -393,7 +392,7 @@ class SpatioTemporalAggregator(object):
             fig = plt.gcf()
             fig.colorbar(tc)
 
-        ax.set_aspect('equal')
+        ax.set_aspect("equal")
 
         return ax
 
@@ -434,7 +433,7 @@ class SpatioTemporalAggregator(object):
             ax = fig.add_subplot(1, 1, 1)
 
         if self.data is None and self.measurements is None:
-            raise ValueError('No data to plot')
+            raise ValueError("No data to plot")
 
         lam, times, _, sub_data, sub_meas = self.sample_data(
             samples_mask=samples, times_mask=times, sensors_mask=sensor_idx
