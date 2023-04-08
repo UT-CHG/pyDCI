@@ -2,7 +2,10 @@
 Theory
 ======
 
-Python package for solving Data-Consistent Inversion Problems. Given:
+Data-Consistent Inversion comprises a set of methods to solve inverse problems founded in rigorous measure theory.
+
+Notation
+========
 
 - :math:`\lambda \in \Lambda \subset \mathbb{R}^n` - parameter(s) of
 interest
@@ -10,8 +13,13 @@ interest
 observable <font color='red'>Quantity of Interest (QoI) Map</font>.
 - :math:`d \in D := Q(\Lambda) \subset \mathbb{R}^m` - observable(s)
 
+Inverse Problems
+================
 
-The goal of the Data-Consistent inversion is, to...
+An inverse problem is posed when one wants to determine a set of parameters that produced observed data. A variety of typed of inverse problems can be posed, depending on the assumptions on the nature of uncertainty in the model parameters and outputs. 
+
+Data-Consistent Solution
+========================
 
 Solution is given by a form of Bayes's rule that incorporates the push-forward
 of a prior distribution , :math:`\pi^{pred}_\mathcal{D}`:
