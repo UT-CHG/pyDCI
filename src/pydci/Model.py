@@ -2,13 +2,17 @@
 Dynamic Model Class
 
 """
+import pdb
 import numpy as np
 import pandas as pd
 from alive_progress import alive_bar
 from scipy.stats.distributions import uniform
+from rich.table import Table
 
-from pydci.log import logger
+from pydci.log import logger, log_table
 from pydci.utils import add_noise, get_df, get_uniform_box, put_df
+
+from pydci.SequentialMUDProblem import SequentialMUDProblem
 
 
 class DynamicModel:
@@ -54,9 +58,10 @@ class DynamicModel:
         self.param_mins = param_mins
         self.param_maxs = param_maxs
 
-        self.samples = None
         self.states = []
         self.push_forwards = []
+        self.samples = None
+        self.mud_prob = None
 
     @property
     def n_params(self) -> int:
@@ -183,19 +188,17 @@ class DynamicModel:
         state_df = put_df(state_df, "true_vals", true_vals, size=self.n_states)
         state_df = put_df(state_df, "obs_vals", measurements, size=self.n_states)
 
-        self.samples.append(samples)
         self.push_forwards.append(push_forwards)
         self.states.append(state_df)
 
     def get_mud_args(
             self,
             it=-1,
-            samples=None,
-            num_samples=1000,
-            diff=0.5,
             weights=None,
     ):
-        """ """
+        """
+        Returns a dictionary of 
+        """
         if len(self.states) == 0:
             raise ValueError('No data to return. run solve first')
         # Build arguments for building MUD problem argument
@@ -210,7 +213,7 @@ class DynamicModel:
         data = data.reshape(-1, 1)
         num_ts = state["sample_flag"].sum()
         args = {
-            "lam": self.samples[-1],
+            "lam": self.samples,
             "q_lam": q_lam,
             "data": data,
             "std_dev": self.measurement_noise,
@@ -254,6 +257,9 @@ class DynamicModel:
             time_windows,
             num_samples=1000,
             diff=0.5,
+            seed=None,
+            qoi_method='all',
+            best_method='closest',
     ):
         """
         Iterative Solver
@@ -271,9 +277,95 @@ class DynamicModel:
         ----
         This will reset the state of the class and erase its previous dataframes.
         """
-        # TODO: Complete
-        # init_samples = self.get_uniform_initial_samples(
-        #     scale=diff, num_samples=num_samples
-        # )
-        # forward_solve(t1, samples=self.samples)
-        pass
+        self.diff = diff
+        if self.samples is not None:
+            yn = input('Previous run exists. Do you want to reset state? y/(n)')
+            if yn == 'n':
+                return
+            self.push_forwards = []
+            self.states = []
+
+        np.random.seed(seed)  # Initial seed for sampling
+        self.samples = self.get_uniform_initial_samples(
+            scale=diff, num_samples=num_samples
+        )
+        if len(time_windows) < 2:
+            time_windows.insert(0, 0)
+        time_windows.sort()
+        self.t0 = time_windows[0]
+
+        logger.info(f"Starting solve over time : {time_windows}")
+        self.sample_weights = None
+        for it, tf in enumerate(time_windows[1:]):
+            logger.info(
+                f"Iteration {it} [{self.t0}, {tf}]: "
+            )
+            self.forward_solve(tf, samples=self.samples)
+            mud_args = self.get_mud_args()
+            if it != 0:
+                self.mud_prob.update_iteration(
+                        *[mud_args[x] for x in
+                          ['lam', 'q_lam', 'data', 'std_dev']])
+            elif it == 0:
+                self.mud_prob = SequentialMUDProblem(
+                        *[mud_args[x] for x in
+                          ['lam', 'q_lam', 'data', 'std_dev']],
+                        max_nc=mud_args['max_nc'],
+                        qoi_method=qoi_method,
+                        best_method=best_method)
+            self.mud_prob.solve()
+            self.iteration_update()
+            logger.info(
+                f" Summary:\n{log_table(self.get_summary_row())}"
+            )
+
+    def iteration_update(
+            self,
+    ):
+        """
+        Perform an update after a Sequential MUD estimation
+        """
+        action = self.mud_prob.result['action'].values[0]
+        if action == 'UPDATE':
+            logger.info('Drawing from updated distribution')
+            self.samples = self.mud_prob.sample_update(self.n_samples)
+            self.sample_weights = None
+        elif action == 'RESET':
+            logger.info('Reseting to initial distribution')
+            self.samples = self.get_uniform_initial_samples(
+                scale=self.diff, num_samples=self.n_samples
+            )
+        elif action == 'RE-WEIGHT':
+            logger.info('Re-weighting current samples')
+            self.sample_weights = self.mud_prob.state['weight'] * \
+                self.mud_prob.state['ratio']
+        else:
+            logger.info('No action taken, continuing with current samples')
+
+    def get_summary_row(
+        self,
+    ):
+        """ """
+        fields = [
+            "Action",
+            "NC",
+            "E(r)",
+            "KL",
+        ]
+
+        table = Table(show_header=True, header_style="bold magenta")
+        cols = ["Key", "Value"]
+        for c in cols:
+            table.add_column(c)
+
+        r = self.mud_prob.result
+        row = (
+            f"{r['action'].values[0]}",
+            f"{r['nc'].values[0]}",
+            f"{r['e_r'].values[0]:0.3f}",
+            f"{r['kl'].values[0]:0.3f}",
+        )
+        for i in range(len(fields)):
+            table.add_row(fields[i], row[i])
+
+        return table

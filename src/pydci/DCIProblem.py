@@ -14,11 +14,19 @@ from pydci.log import logger
 from pydci.utils import fit_domain, put_df, set_shape
 
 
-class DCIProblem(object):
+class ConsistentBayes(object):
     """
-    Data Consistent Inversion Problem
+    Consistent Bayesian Solution to Data Consistent Inversion Problem
 
-    Solves a Data-Consistent Inversion Problem as formulated first in [1].
+    Solves a Data-Consistent Inversion Problem using a density based
+    solution formulated first in [1]. Given an observed distribtuion on data
+    `obs_dist`, the goal is to determine the distribution of input parameters
+    that, when pushed through the forward model Q, generates an observed
+    distribution that is consistent with the distribution on the data. The
+    class takes a set of initial input samples lambda `lam`, and their
+    associated values `q_lam` from pushing each sample through the  forward
+    model. Optionall as well, a set of weights can be passed to incorporate
+    previous beliefs on each sample in the set into the solution.
 
     Attributes
     ----------
@@ -27,19 +35,27 @@ class DCIProblem(object):
         Rows represent each sample while columns represent parameter values.
         If 1 dimensional input is passed, assumed that it represents repeated
         samples of a 1-dimensional parameter.
-    model : Model
-        Model to push forward samples through
-    domain : ArrayLike
-        Array containing ranges of each parameter value in the parameter
-        space. Note that the number of rows must equal the number of
-        parameters, and the number of columns must always be two, for min/max
-        range. If non specified, will be inferred from the sampls array.
+    q_lam: ArrayLike
+        2D array of values of each `lam` sample pushed through the forward
+        model. Each row represent the value for each parameter, with each
+        column being the value of observed QoI.
+    obs_dist: rv_continuous
+        scipy.stats continuous distribution object describing distribution on
+        observed data that the consistent bayesian solution is trying to match.
+    initial : rv_continuous, optional
+        scipy.stats continuous distribution object describing distribution on
+        initial samples, if known. If not, a gaussain kernel density estimate
+        is done on the initial set of samples to determine the initial
+        distribution.
     weights : ArrayLike, optional
         Weights to apply to each parameter sample. Either a 1D array of the
         same length as number of samples or a 2D array if more than
         one set of weights is to be incorporated. If so the weights will be
-        multiplied and normalized row-wise, so the number of columns must
-        match the number of samples.
+        multiplied, so the number of columns must match the number of samples.
+
+    Methods
+    -------
+    solve
 
     References
     ----------
@@ -56,7 +72,6 @@ class DCIProblem(object):
         obs_dist,
         init_dist: rv_continuous = None,
         weights: ArrayLike = None,
-        normalize: bool = False,
     ):
         self.init_state(lam, q_lam)
         self.dists = {
@@ -67,7 +82,7 @@ class DCIProblem(object):
         }
 
         # Initialize weights
-        self.set_weights(weights, normalize=normalize)
+        self.set_weights(weights)
 
         self.result = None
 
@@ -109,7 +124,7 @@ class DCIProblem(object):
         self.state = put_df(self.state, "q_lam", self.q_lam, size=self.n_states)
         self.state = put_df(self.state, "lam", self.lam, size=self.n_params)
 
-    def set_weights(self, weights: ArrayLike = None, normalize: bool = False):
+    def set_weights(self, weights: ArrayLike = None):
         """Set Sample Weights
 
         Sets the weights to use for each sample. Note weights can be one or two
@@ -123,8 +138,6 @@ class DCIProblem(object):
         weights : np.ndarray, List
             Numpy array or list of same length as the `n_samples` or if two
             dimensional, number of columns should match `n_samples`
-        normalize : bool, default=False
-            Whether to normalize the weights vector.
 
         Returns
         -------
@@ -148,9 +161,6 @@ class DCIProblem(object):
 
             # Multiply weights column wise for stacked weights
             w = np.prod(w, axis=0)
-
-            if normalize:
-                w = np.divide(w, np.linalg.norm(w))
 
         self.state["weight"] = w
 
@@ -283,7 +293,9 @@ class DCIProblem(object):
         )
 
     def solve(self):
-        """ """
+        """
+        Solve the Data Consistent Inverse Problem
+        """
         self._update()
 
         results_cols = ["e_r", "kl"]
@@ -335,24 +347,16 @@ class DCIProblem(object):
     def sample_update(self, num_samples):
         """Updated Distribution
 
-        Returns the expectation value of the R, the ratio of the observed to
-        the predicted density values.
-
-        .. math::
-            R = \\frac{\\pi_{ob}(\\lambda)}
-                      {\\pi_{pred}(\\lambda)}
-            :label: r_ratio
-
-        If the predictability assumption for the data-consistent framework is
-        satisfied, then :math:`E[R]\\approx 1`.
+        Sample from the updated distribution.
 
         Parameters
         ----------
 
         Returns
         -------
-        expected_ratio : float
-            Value of the E(r). Should be close to 1.0.
+        samples: ArrayLike
+            Samples from the udpated distribution. Dimension of array is
+            (num_samples * num_params)
         """
         return self.pi_up.resample(size=num_samples).T
 
@@ -531,7 +535,7 @@ class DCIProblem(object):
         self,
     ):
         """
-        Parse Title
+        Parse title for plots
         """
         kl = self.result["kl"].values[0]
         e_r = self.result["e_r"].values[0]

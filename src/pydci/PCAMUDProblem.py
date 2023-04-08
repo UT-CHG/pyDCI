@@ -1,6 +1,10 @@
-import itertools
+"""
+PCAMUDProblem
+
+MUD Parameter Estimation with Q_PCA Data-Constructed Map
+"""
+
 import pdb
-import random
 from typing import Callable, List, Optional, Union
 
 import numpy as np
@@ -8,10 +12,11 @@ import pandas as pd
 from numpy.typing import ArrayLike
 from scipy.stats import distributions as dist  # type: ignore
 from scipy.stats import rv_continuous  # type: ignore
+from sklearn.decomposition import PCA  # type: ignore
+from sklearn.preprocessing import StandardScaler  # type: ignore
 
 from pydci.log import logger
 from pydci.MUDProblem import MUDProblem
-from pydci.pca import pca
 from pydci.utils import get_df, put_df
 
 
@@ -75,17 +80,19 @@ class PCAMUDProblem(MUDProblem):
         mask = np.arange(self.n_qoi) if self.pca_mask is None else self.pca_mask
         residuals = np.subtract(self.data[mask].T, self.qoi[:, mask]) / self.std_dev
 
-        # Learn qoi to use using PCA
-        pca_res, X_train = pca(residuals, n_components=self.max_nc)
+        # Standarize and perform linear PCA
+        sc = StandardScaler()
+        pca = PCA(n_components=self.max_nc)
+        X_train = pca.fit_transform(sc.fit_transform(residuals))
         self.pca = {
             "X_train": X_train,
-            "vecs": pca_res.components_,
-            "var": pca_res.explained_variance_,
+            "vecs": pca.components_,
+            "var": pca.explained_variance_,
         }
-        qoi = residuals @ pca_res.components_.T
 
-        self.q_lam = qoi
-        self.state = put_df(self.state, "q_pca", qoi, size=self.max_nc)
+        # Compute Q_PCA
+        self.q_lam = residuals @ pca.components_.T
+        self.state = put_df(self.state, "q_pca", self.q_lam, size=self.max_nc)
 
     def solve(self):
         """

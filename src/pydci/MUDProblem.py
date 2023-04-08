@@ -16,7 +16,7 @@ from pydci.utils import fit_domain, get_df, put_df, set_shape
 
 class MUDProblem(DCIProblem):
     """
-    Sets up Maxmal Update Density Inverse wroblem for parameter identification
+    Sets up Maxmal Update Density Inverse problem for parameter identification
 
     """
 
