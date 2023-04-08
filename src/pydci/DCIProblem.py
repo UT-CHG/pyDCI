@@ -88,19 +88,32 @@ class ConsistentBayes(object):
 
     @property
     def n_params(self):
+        """
+        Number if Parameters
+        """
         return self.lam.shape[1]
 
     @property
     def n_states(self):
+        """
+        Number of States
+        """
         return self.q_lam.shape[1]
 
     @property
     def n_samples(self):
+        """
+        Number of Samples
+        """
         return self.lam.shape[0]
 
     @property
     def pi_up(self):
-        """Updated Distribution"""
+        """
+        Updated Distribution
+        
+        Computed using scipy's gaussian kernel density estimation on the initial samples, but weighted by the ratio of the updated and predicted distributions (evaluated at each sample value). Note, if the initial samples were weighted, then the weights are applied as well. 
+        """
         # Compute udpated density
         if self.dists["updated"] is None:
             self.dists["updated"] = gkde(
