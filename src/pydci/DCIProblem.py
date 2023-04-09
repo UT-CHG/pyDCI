@@ -14,9 +14,9 @@ from pydci.log import logger
 from pydci.utils import fit_domain, put_df, set_shape
 
 
-class ConsistentBayes(object):
+class DCIProblem(object):
     """
-    Consistent Bayesian Solution to Data Consistent Inversion Problem
+    Consistent Bayesian Solution to the Data Consistent Inversion Problem
 
     Solves a Data-Consistent Inversion Problem using a density based
     solution formulated first in [1]. Given an observed distribtuion on data
@@ -39,23 +39,23 @@ class ConsistentBayes(object):
         2D array of values of each `lam` sample pushed through the forward
         model. Each row represent the value for each parameter, with each
         column being the value of observed QoI.
-    obs_dist: rv_continuous
+    pi_obs: rv_continuous
         scipy.stats continuous distribution object describing distribution on
         observed data that the consistent bayesian solution is trying to match.
-    initial : rv_continuous, optional
+    pi_in: rv_continuous, optional
         scipy.stats continuous distribution object describing distribution on
         initial samples, if known. If not, a gaussain kernel density estimate
-        is done on the initial set of samples to determine the initial
-        distribution.
+        is done on the initial set of samples, `lam`,
+    pi_pr: rv_continuous, optional
+        scipy.stats continuous distribution object describing distribution on
+        push forward of initial samples, if known analytically. If not, a
+        gaussain kernel density estimate is done on the push forward of the
+        initial set of samples, `q_lam`.
     weights : ArrayLike, optional
         Weights to apply to each parameter sample. Either a 1D array of the
         same length as number of samples or a 2D array if more than
         one set of weights is to be incorporated. If so the weights will be
         multiplied, so the number of columns must match the number of samples.
-
-    Methods
-    -------
-    solve
 
     References
     ----------
@@ -69,27 +69,17 @@ class ConsistentBayes(object):
         self,
         lam,
         q_lam,
-        obs_dist,
-        init_dist: rv_continuous = None,
-        weights: ArrayLike = None,
+        pi_obs,
+        pi_in = None,
+        pi_pr = None,
+        weights=None,
     ):
-        self.init_state(lam, q_lam)
-        self.dists = {
-            "initial": init_dist,
-            "predicted": None,
-            "observed": obs_dist,
-            "updated": None,
-        }
-
-        # Initialize weights
-        self.set_weights(weights)
-
-        self.result = None
+        self.init_prob(lam, q_lam, pi_obs, pi_in=pi_in, pi_pr=pi_pr)
 
     @property
     def n_params(self):
         """
-        Number if Parameters
+        Number of Parameters
         """
         return self.lam.shape[1]
 
@@ -107,24 +97,21 @@ class ConsistentBayes(object):
         """
         return self.lam.shape[0]
 
-    @property
-    def pi_up(self):
+    def init_prob(self,
+                  lam,
+                  q_lam,
+                  pi_obs,
+                  pi_in=None,
+                  pi_pr=None,
+                  weights=None):
         """
-        Updated Distribution
-        
-        Computed using scipy's gaussian kernel density estimation on the initial samples, but weighted by the ratio of the updated and predicted distributions (evaluated at each sample value). Note, if the initial samples were weighted, then the weights are applied as well. 
-        """
-        # Compute udpated density
-        if self.dists["updated"] is None:
-            self.dists["updated"] = gkde(
-                self.lam.T, weights=self.state["ratio"] * self.state["weight"]
-            )
+        Initialize problem
 
-        return self.dists["updated"]
-
-    def init_state(self, lam, q_lam):
-        """
-        Initialize state dataframe
+        Initialize problem by setting the lambda samples, the values of the
+        samples pushed through the forward map, and the observe distribution
+        on the data. Can optionally as well set the initial and predicteed
+        distributions explicitly, and pass in weights to incorporate prior
+        beliefs on the `lam` sample sets.
         """
         self.lam = set_shape(np.array(lam), (1, -1))
         self.q_lam = set_shape(np.array(q_lam), (-1, 1))
@@ -136,9 +123,141 @@ class ConsistentBayes(object):
         )
         self.state = put_df(self.state, "q_lam", self.q_lam, size=self.n_states)
         self.state = put_df(self.state, "lam", self.lam, size=self.n_params)
+        self.set_weights(weights)
+        if pi_pr is None:
+            logger.info('Calculating pi_pr by computing KDE on samples')
+            pr = gkde(
+                self.q_lam.T, weights=self.state["weight"]
+            )
+        self.dists = {
+            "pi_in": pi_in,
+            "pi_pr": pi_pr,
+            "pi_obs": pi_obs,
+            "pi_up": None,
+        }
+        self.result = None
+
+    def pi_in(self,
+              values=None):
+        """
+        Evaluate the initial distribution.
+
+        Init distribion is either set explicitly in by a call to `init_prob`
+        or calculated from a gaussain kernel density estimate (using scipy) on
+        the initial samples, weighted by the sample weights.
+        """
+        if self.dists['pi_in'] is None:
+            logger.info('Calculating pi_in by computing KDE on lam')
+            self.dists['pi_in'] = gkde(
+                self.lam.T, weights=self.state["weight"]
+            )
+        values = self.lam if values is None else values
+        if isinstance(self.dists['pi_in'], gkde):
+            return self.dists["pi_in"].pdf(values.T).T
+        else:
+            return self.dists["pi_in"].pdf(values)
+
+    def pi_pr(self,
+              values=None):
+        """
+        Evaluate the predicted distribution.
+
+        Predicted distribion is either set explicitly in the call to
+        `init_prob` or calculated from a gaussain kernel density estimate
+        (using scipy) on the push forward of the initial samples, q_lam,
+        weighted by the sample weights.
+        """
+        if self.dists['pi_pr'] is None:
+            logger.info('Calculating pi_pr by computing KDE on q_lam')
+            self.dists['pi_pr'] = gkde(
+                self.q_lam.T, weights=self.state["weight"]
+            )
+        values = self.q_lam if values is None else values
+        if isinstance(self.dists['pi_pr'], gkde):
+            return self.dists["pi_pr"].pdf(values.T).T.ravel()
+        else:
+            return self.dists["pi_pr"].pdf(values).prod(axis=1)
+
+    def pi_obs(self,
+               values=None):
+        """
+        Evaluate the observed distribution.
+
+        Observed distribion is set explicitly in the call to `init_prob`.
+        """
+        values = self.q_lam if values is None else values
+        if isinstance(self.dists['pi_obs'], gkde):
+            return self.dists["pi_obs"].pdf(values.T).T.ravel()
+        else:
+            return self.dists["pi_obs"].pdf(values).prod(axis=1)
+
+    def pi_up(self,
+              values=None):
+        """
+        Evaluate Updated Distribution
+
+        Computed using scipy's gaussian kernel density estimation on the
+        initial samples, but weighted by the ratio of the updated and predicted
+        distributions (evaluated at each sample value). Note, if the initial
+        samples were weighted, then the weights are applied as well.
+        """
+        # Compute udpated density
+        if self.dists["pi_up"] is None:
+            self.dists["pi_up"] = gkde(
+                self.lam.T, weights=self.state["ratio"] * self.state["weight"]
+            )
+        values = self.lam if values is None else values
+        return self.dists["pi_up"].pdf(values.T).T
+
+    def pi_pf(self,
+              values=None):
+        """
+        Evaluate Updated Distribution
+
+        Computed using scipy's gaussian kernel density estimation on the
+        initial samples, but weighted by the ratio of the updated and predicted
+        distributions (evaluated at each sample value). Note, if the initial
+        samples were weighted, then the weights are applied as well.
+        """
+        # Compute udpated density
+        if self.dists["pi_pf"] is None:
+            self.dists["pi_pf"] = gkde(
+                self.q_lam.T, weights=self.state["ratio"] * self.state["weight"]
+            )
+        values = self.q_lam if values is None else values
+        return self.dists["pi_pf"].pdf(values.T).T
+
+    def sample_dist(self, num_samples=1, dist='pi_up'):
+        """
+        Sample Stored Distribution
+
+        Samples from stored distribtuion. By default samples from updated
+        distribution on parameter samples, but also can draw samples from any
+        stored distribtuion: pi_in, pi_pr, pi_obs, and pi_up.
+
+        Parameters
+        ----------
+        dist: optional, default='pi_up'
+            Distribution to samples from. By default sample from the update
+            distribution
+        num_samples: optional, default=1
+            Number of samples to draw from distribtuion
+
+        Returns
+        -------
+        samples: ArrayLike
+            Samples from the udpated distribution. Dimension of array is
+            (num_samples * num_params)
+        """
+        if isinstance(self.dists[dist], gkde):
+            return self.self.dists[dist].resample(size=num_samples).T
+        else:
+            dim = self.n_params if dist == 'pi_in' else self.n_states
+            return self.self.dists[dist].rvs((num_samples, dim)).T
 
     def set_weights(self, weights: ArrayLike = None):
-        """Set Sample Weights
+        """
+        Set Sample Weights
 
         Sets the weights to use for each sample. Note weights can be one or two
         dimensional. If weights are two dimensional the weights are combined
@@ -152,14 +271,6 @@ class ConsistentBayes(object):
             Numpy array or list of same length as the `n_samples` or if two
             dimensional, number of columns should match `n_samples`
 
-        Returns
-        -------
-
-        Warnings
-        --------
-        Resetting weights will delete the predicted and updated distribution
-        values in the class, requiring a re-run of adequate `set_` methods
-        and/or `fit()` to reproduce with new weights.
         """
         if weights is None:
             w = np.ones(self.n_samples)
@@ -177,147 +288,31 @@ class ConsistentBayes(object):
 
         self.state["weight"] = w
 
-    def set_initial(
-        self,
-        distribution: Optional[rv_continuous] = None,
-        bw_method: Union[str, Callable, np.generic] = None,
-    ):
+    def solve(self):
         """
-        Set initial probability distribution of model parameter values
-        :math:`\\pi_{in}(\\lambda)`.
-
-        Parameters
-        ----------
-        distribution : scipy.stats.rv_continuous, optional
-            scipy.stats continuous distribution object from where initial
-            parameter samples were drawn from. If none provided, then a uniform
-            distribution over domain of the density problem is assumed. If no
-            domain is specified for density, then a standard normal
-            distribution :math:`N(0,1)` is assumed.
-
-        Warnings
-        --------
-        Setting initial distribution resets the predicted and updated
-        distributions, so make sure to set the initial first.
-        """
-        if distribution is None:
-            self.dists["initial"] = gkde(
-                self.lam.T, bw_method=bw_method, weights=self.state["weight"]
-            )
-        else:
-            self.dists["initial"] = distribution
-
-    def set_predicted(
-        self,
-        distribution: rv_continuous = None,
-        bw_method: Union[str, Callable, np.generic] = None,
-        weights: ArrayLike = None,
-        **kwargs,
-    ):
-        """
-        Set Predicted Distribution
-
-        The predicted distribution over the observable space is equal to the
-        push-forward of the initial through the model
-        :math:`\\pi_{pr}(Q(\\lambda)`. If no distribution is passed,
-        :class:`scipy.stats.gaussian_kde` is used over the predicted values
-        :attr:`y` to estimate the predicted distribution.
-
-        Parameters
-        ----------
-        distribution : :class:`scipy.stats.rv_continuous`, optional
-            If specified, used as the predicted distribution instead of the
-            default of using gaussian kernel density estimation on observed
-            values y. This should be a frozen distribution if using
-            `scipy`, and otherwise be a class containing a `pdf()` method
-            return the probability density value for an array of values.
-        bw_method : str, scalar, or `Callable`, optional
-            Method to use to calculate estimator bandwidth. Only used if
-            distribution is not specified, See documentation for
-            :class:`scipy.stats.gaussian_kde` for more information.
-        weights : ArrayLike, optional
-            Weights to use on predicted samples. Note that if specified,
-            :meth:`set_weights` will be run first to calculate new weights.
-            Otherwise, whatever was previously set as the weights is used.
-            Note this defaults to a weights vector of all 1s for every sample
-            in the case that no weights were passed on upon initialization.
-        **kwargs: dict, optional
-            If specified, any extra keyword arguments will be passed along to
-            the passed ``distribution.pdf()`` function for computing values of
-            predicted samples.
-
-        Note: `distribution` should be a frozen distribution if using `scipy`.
-
-        Warnings
-        --------
-        If passing a `distribution` argument, make sure that the initial
-        distribution has been set first, either by having run
-        :meth:`set_initial` or :meth:`fit` first.
-        """
-        if weights is not None:
-            self.set_weights(weights)
-
-        if distribution is None:
-            # Reweight kde of predicted by weights if present
-            distribution = gkde(
-                self.q_lam.T, bw_method=bw_method, weights=self.state["weight"]
-            )
-        self.dists["predicted"] = distribution
-
-    def _update(self):
-        """
-        Update Initial Distribution
-
-        Constructs the updated distribution by fitting observed data to
-        predicted data with:
+        Solve the data consistent inverse problem by computing:
 
         .. math::
             \\pi_{up}(\\lambda) = \\pi_{in}(\\lambda)
             \\frac{\\pi_{ob}(Q(\\lambda))}{\\pi_{pred}(Q(\\lambda))}
             :label: data_consistent_solution
 
-        Note that if initial, predicted, and observed distributions have not
-        been seti before running this method, they will be run with default
-        values. To set specific predicted, observed, or initial distributions
-        use the ``set_`` methods.
-
-        Parameters
-        -----------
-
-        Returns
-        -----------
         """
-        if self.dists["initial"] is None:
-            self.set_initial()
-        if self.dists["predicted"] is None:
-            self.set_predicted()
-
-        self.state["pi_in"] = self.dists["initial"].pdf(self.lam.T).T
-        self.state["pi_obs"] = self.dists["observed"].pdf(self.q_lam).prod(axis=1)
-        self.state["pi_pr"] = self.dists["predicted"].pdf(self.q_lam.T).T.ravel()
-
-        # Store ratio of observed/predicted
-        # e.g. to comptue E(r) and to pass on to future iterations
-        self.state["ratio"] = np.divide(self.state["pi_obs"], self.state["pi_pr"])
-
-        # Multiply by initial to get updated pdf
+        self.state["pi_in"] = self.pi_in()
+        self.state["pi_obs"] = self.pi_obs()
+        self.state["pi_pr"] = self.pi_pr()
+        self.state["ratio"] = np.divide(self.state["pi_obs"],
+                                        self.state["pi_pr"])
         self.state["pi_up"] = np.multiply(
             self.state["pi_in"] * self.state["weight"], self.state["ratio"]
         )
 
-    def solve(self):
-        """
-        Solve the Data Consistent Inverse Problem
-        """
-        self._update()
-
+        # Store result into result dataframe
         results_cols = ["e_r", "kl"]
         results = np.zeros((1, 2))
         results[0, 0] = self.expected_ratio()
         results[0, 1] = self.divergence_kl()
-
         res_df = pd.DataFrame(results, columns=results_cols)
-
         self.result = res_df
 
     def expected_ratio(self):
@@ -333,9 +328,6 @@ class ConsistentBayes(object):
 
         If the predictability assumption for the data-consistent framework is
         satisfied, then :math:`E[R]\\approx 1`.
-
-        Parameters
-        ----------
 
         Returns
         -------
@@ -357,33 +349,18 @@ class ConsistentBayes(object):
         """
         return entropy(self.state["pi_obs"], self.state["pi_pr"])
 
-    def sample_update(self, num_samples):
-        """Updated Distribution
-
-        Sample from the updated distribution.
-
-        Parameters
-        ----------
-
-        Returns
-        -------
-        samples: ArrayLike
-            Samples from the udpated distribution. Dimension of array is
-            (num_samples * num_params)
-        """
-        return self.pi_up.resample(size=num_samples).T
-
     def plot_param_state(
         self,
         ax=None,
         param_idx=0,
         ratio_col="ratio",
-        plot_initial=False,
+        plot_initial=True,
         plot_legend=True,
-        figsize=(8, 8),
+        figsize=(6, 6),
     ):
         """
-        Plotting functions for DCI Problem Class
+        Plot distributions over parameter space. This includes the initial and
+        the updated distributinos.
         """
         sns.set_style("darkgrid")
 
@@ -444,7 +421,9 @@ class ConsistentBayes(object):
         figsize=(6, 6),
     ):
         """
-        Plotting function for DCI Problem Class
+        Plot distributions over observable space `q_lam`. This includes the
+        observed distribution `pi_obs`, the predicted distribtuion `pi_pr`, and
+        the push-forward of the updated distribution `pi_pf`.
         """
         sns.set_style("darkgrid")
 
@@ -488,7 +467,7 @@ class ConsistentBayes(object):
             obs_x = np.linspace(obs_domain[0], obs_domain[1], 10000)
             obs_x_marginal = np.zeros((len(obs_x), self.n_states))
             obs_x_marginal[:, state_idx] = obs_x
-            obs = self.dists["observed"].pdf(obs_x_marginal)[:, state_idx]
+            obs = self.pi_obs(values=obs_x_marginal)
             ax.plot(obs_x, obs, color="r", label=obs_label)
             labels.append(obs_label)
 
@@ -530,14 +509,13 @@ class ConsistentBayes(object):
 
     def density_plots(
         self,
-        true_vals=None,
         figsize=(14, 6),
     ):
         """
         Plot param and observable space onto sampe plot
         """
         fig, axs = plt.subplots(1, 2, figsize=(14, 6))
-        self.plot_param_state(true_vals=true_vals, ax=axs[0])
+        self.plot_param_state(ax=axs[0])
         self.plot_obs_state(ax=axs[1])
         fig.suptitle(self._parse_title())
         fig.tight_layout()
@@ -555,3 +533,4 @@ class ConsistentBayes(object):
         title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
 
         return title
+

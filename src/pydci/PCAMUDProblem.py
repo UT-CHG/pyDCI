@@ -22,7 +22,11 @@ from pydci.utils import get_df, put_df
 
 class PCAMUDProblem(MUDProblem):
     """
-    Sets up Maxmal Update Density Inverse wroblem for parameter identification
+    Sets up Maxmal Update Density Inverse problem for parameter identification
+
+    This extends the DCIProblem class by computing the Maximal Updated Density,
+    or MUD, point, as the parameter sample that maximizes the updated
+    distribution in order to solve a parmater estimation problem.
 
     """
 

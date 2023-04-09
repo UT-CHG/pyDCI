@@ -16,7 +16,17 @@ from pydci.utils import fit_domain, get_df, put_df, set_shape
 
 class MUDProblem(DCIProblem):
     """
-    Sets up Maxmal Update Density Inverse problem for parameter identification
+    Maximal Updated Density Problem
+
+    Sets up Maxmal Update Density Inverse problem for parameter identification.
+    This extends the DCIProblem class by computing the Maximal Updated Density,
+    or MUD, point, as the parameter sample that maximizes the updated
+    distribution in order to solve a parmater estimation problem, as first
+    proposed in [1].
+
+
+    References
+    ----------
 
     """
 
