@@ -27,8 +27,23 @@ of a prior distribution , :math:`\pi^{pred}_\mathcal{D}`:
 .. math::
 
     \pi^{up}_\Lambda(\lambda) = \pi^{in}_\Lambda(\lambda)\frac{\pi^{obs}_\mathcal{D}(Q(\lambda))}{\pi^{pred}_\mathcal{D}(Q(\lambda))}
+    :label: data_consistent_solution
+
 
 Fore more information on theoretical formulations. See references below.
+
+The Predictability Assumption
+=============================
+
+
+.. math::
+    R = \\frac{\\pi_{ob}(\\lambda)}
+              {\\pi_{pred}(\\lambda)}
+    :label: r_ratio
+
+If the predictability assumption for the data-consistent framework is
+satisfied, then :math:`E[R]\\approx 1`.
+
 
 References
 ==========

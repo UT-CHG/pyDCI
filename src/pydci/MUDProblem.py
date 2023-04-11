@@ -18,16 +18,58 @@ class MUDProblem(DCIProblem):
     """
     Maximal Updated Density Problem
 
-    Sets up Maxmal Update Density Inverse problem for parameter identification.
+    Maxmal Update Density Inverse problem class for parameter identification.
     This extends the DCIProblem class by computing the Maximal Updated Density,
     or MUD, point, as the parameter sample that maximizes the updated
     distribution in order to solve a parmater estimation problem, as first
     proposed in [1].
 
+    The key distinction is the assumptions being made in the data between a
+    parameter estimation problem and a general Data Consistent Inversion
+    problem. In a MUDProblem, we assume that the source of the error in the
+    parameter samples that we want to quantify is epistemic in nature data,
+    and thus our data come from deterministic map, that when pushed forward
+    through our QoI map is simply populated with error. The goal is then to
+    determine the true value of the parameter that produced the observed data,
+    instead of quantifying the probability distribution of the parameter itself,
+    and our solution is a point and not a distribution.
+
+    This class extends the DCIProblem class in the following ways:
+
+        1. Initialization - Instead of receiving an observed distribution on
+        data as the input, the observed data itself should be passed, along
+        with the standard deviation associated with the i.i.d. Gaussian noise
+        the data is assumed to be populate with. The observe distribution is
+        set by default to a Gaussian Distribution with mean around the man of
+        the data and standard deviation equal to the passed in `std_dev`.
+        2. `solve()` - Solve method is extended by computing the mud point and
+        storing it in the attribute `mud_point`. Note this is calculated as the
+        sample that has the maximum `pi_up` value in the classes's `state`
+        DataFrame, NOT the maximum value as determined by the kde computed on
+        these values.
+        3. Plotting - Plots add vertical lines for MUD points on the parameter
+        distribution plots, and options for plotting the true value if known.
+
+    Note: this class does no data-aggregation using data-constructed QoI maps
+    as proposed in [1] for parameter estimation. See sub-classes `WMEMUDProblem`
+    and `PCAMUDProblem` for classes that use data-constructed QoI maps for
+    parameter estimation.
+
+    Attributes
+    ----------
+    data : ArrayLike
+        Observed data. Should be of same dimension as the number of observed
+        states for each passsed in sample, `q_lam`.
+    data : ArrayLike
+        Observed data. Should be of same dimension as the number of observed
+        states for each passsed in sample, `q_lam`.
 
     References
     ----------
-
+    [1] M. Pilosov, C. del-Castillo-Negrete, T. Y. Yen, T. Butler, and C.
+    Dawson, “Parameter estimation with maximal updated densities,” Computer
+    Methods in Applied Mechanics and Engineering, vol. 407, p. 115906, Mar.
+    2023, doi: 10.1016/j.cma.2023.115906.
     """
 
     def __init__(
@@ -58,7 +100,12 @@ class MUDProblem(DCIProblem):
 
     def solve(self):
         """
-        Solve Problem
+        Solve MUD Parameter Estimation Problem
+
+        Extends the parent method by computing the MUD point, the solution
+        to the parameter estimation problem, as the samples that maximizes the
+        `pi_up` column in the state DataFrame. This MUD Point is stored in the
+        results DataFrame that is returned.
         """
         super().solve()
         m = np.argmax(self.state["pi_up"])
@@ -78,7 +125,7 @@ class MUDProblem(DCIProblem):
         figsize=(8, 8),
     ):
         """
-        Plotting functions for DCI Problem Class
+        Plotting functions for MUDProblem Class
         """
         ax, labels = super().plot_param_state(
             ax=ax,

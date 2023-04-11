@@ -3,6 +3,7 @@ Dynamic Model Class
 
 """
 import pdb
+from typing import Callable, List, Optional, Union, Tuple
 import numpy as np
 import pandas as pd
 from alive_progress import alive_bar
@@ -11,8 +12,6 @@ from rich.table import Table
 
 from pydci.log import logger, log_table
 from pydci.utils import add_noise, get_df, get_uniform_box, put_df
-
-from pydci.SequentialMUDProblem import SequentialMUDProblem
 
 
 class DynamicModel:
@@ -25,16 +24,15 @@ class DynamicModel:
         Function that runs the forward model. Should be callable using
     x0 : ndarray
         Initial state of the system.
-    true_param : ndarray
+    lam_true : ndarray
         True parameter value for creating the reference data using the passed
         in forward_model.
     """
 
     def __init__(
         self,
-        forward_model,
         x0,
-        true_param,
+        lam_true,
         t0=0.0,
         measurement_noise=0.05,
         solve_ts=0.2,
@@ -44,12 +42,11 @@ class DynamicModel:
         param_maxs=None,
         param_shifts=None,
     ):
-        self.forward_model = forward_model
         self.x0 = x0
         self.t0 = t0
         self.samples = None
         self.samples_x0 = None
-        self.true_param = true_param
+        self.lam_true = lam_true
         self.measurement_noise = measurement_noise
         self.solve_ts = solve_ts
         self.sample_ts = sample_ts
@@ -60,21 +57,14 @@ class DynamicModel:
 
         self.states = []
         self.push_forwards = []
-        self.samples = None
-        self.mud_prob = None
 
     @property
     def n_params(self) -> int:
-        return len(self.true_param)
+        return len(self.lam_true)
 
     @property
     def n_states(self) -> int:
         return len(self.x0)
-
-    @property
-    def n_samples(self) -> int:
-        if self.samples is not None:
-            return len(self.samples)
 
     def get_param_intervals(self, t0, t1):
         """
@@ -90,7 +80,7 @@ class DynamicModel:
         shift_idx = np.zeros((len(ts)), dtype=int)
         param_vals = np.zeros((len(ts), self.n_params))
         for p_idx in range(self.n_params):
-            param_vals[:, p_idx] = self.true_param[p_idx]
+            param_vals[:, p_idx] = self.lam_true[p_idx]
         for i, st in enumerate(shift_times):
             idxs = ts > st
             shift_idx[idxs] = i
@@ -99,7 +89,12 @@ class DynamicModel:
 
         return ts, shift_idx, param_vals
 
-    def forward_solve(self, tf, x0=None, t0=None, samples=None, samples_x0=None):
+    def forward_solve(self,
+                      tf,
+                      x0=None,
+                      t0=None,
+                      samples=None,
+                      samples_x0=None):
         """
         Forward Model Solve
 
@@ -134,11 +129,13 @@ class DynamicModel:
         ts, shift_idx, param_vals = self.get_param_intervals(self.t0, tf)
         true_vals = np.zeros((len(ts), self.n_states))
 
+        pdb.set_trace()
         for i in range(shift_idx[-1] + 1):
             idxs = shift_idx == i
             times = ts[idxs]
-            true_param = param_vals[idxs, :][0]
-            true_vals[idxs] = self.forward_model(x0_temp, times, tuple(true_param))
+            lam_true = param_vals[idxs, :][0]
+            true_vals[idxs] = self.forward_model(x0_temp,
+                                                 times, tuple(lam_true))
             x0_temp = true_vals[idxs][-1]
 
         sample_step = int(self.sample_ts / self.solve_ts)
@@ -181,44 +178,27 @@ class DynamicModel:
                 self.samples_x0 = push_forwards[:, sample_ts_flag[-1], :]
 
         # Store everything in state DF
-        state_df = pd.DataFrame(ts, columns=["ts"])
-        state_df["shift_idx"] = shift_idx
-        state_df["sample_flag"] = sample_ts_flag
-        state_df = put_df(state_df, "true_param", param_vals)
-        state_df = put_df(state_df, "true_vals", true_vals, size=self.n_states)
-        state_df = put_df(state_df, "obs_vals", measurements, size=self.n_states)
-
-        self.push_forwards.append(push_forwards)
-        self.states.append(state_df)
-
-    def get_mud_args(
-            self,
-            it=-1,
-            weights=None,
-    ):
-        """
-        Returns a dictionary of 
-        """
-        if len(self.states) == 0:
-            raise ValueError('No data to return. run solve first')
-        # Build arguments for building MUD problem argument
-        state = self.states[it]
-        pfs = self.push_forwards[it]
-        q_lam = np.array(
-            pfs[:, np.where(state["sample_flag"].values), :]
-        ).reshape(self.n_samples, -1)
-        data = get_df(
-            state.loc[state["sample_flag"]], "obs_vals", size=2
-        )
-        data = data.reshape(-1, 1)
-        num_ts = state["sample_flag"].sum()
+        data_df = pd.DataFrame(ts, columns=["ts"])
+        data_df["shift_idx"] = shift_idx
+        data_df["sample_flag"] = sample_ts_flag
+        data_df = put_df(data_df, "lam_true", param_vals)
+        data_df = put_df(data_df, "q_lam_true",
+                          true_vals, size=self.n_states)
+        data_df = put_df(data_df, "q_lam_obs",
+                          measurements, size=self.n_states)
+        # self.states.append(state_df)
         args = {
-            "lam": self.samples,
-            "q_lam": q_lam,
-            "data": data,
+            "data": data_df,
             "std_dev": self.measurement_noise,
-            "max_nc": self.n_params if self.n_params <= num_ts else num_ts,
         }
+        if push_forwards is not None:
+            samples_df = pd.DataFrame(
+                    data=samples,
+                    columns=[f'lam_{x}' for x in range(self.n_params)])
+            samples_df = put_df(samples_df, 'q_lam',
+                              np.reshape(push_forwards, (len(samples), -1)),
+                              size=self.n_states)
+            args['samples'] = samples_df
 
         return args
 
@@ -235,13 +215,18 @@ class DynamicModel:
         )
         return init_conds
 
-    def get_uniform_initial_samples(self, scale=0.5, num_samples=1000):
+    def get_uniform_initial_samples(self,
+                                    center=None,
+                                    scale=0.5,
+                                    num_samples=1000):
         """
         Generate initial samples from uniform distribution over domain set by
         `self.set_domain`.
         """
+        center = self.lam_true if center is None else center
         domain = get_uniform_box(
-            self.true_param, factor=scale, mins=self.param_mins, maxs=self.param_maxs
+            self.lam_true, factor=scale,
+            mins=self.param_mins, maxs=self.param_maxs
         )
         loc = domain[:, 0]
         scale = domain[:, 1] - domain[:, 0]
@@ -249,123 +234,39 @@ class DynamicModel:
             f"Drawing {num_samples} from uniform at:\n"
             + f"\tloc: {loc}\n\tscale: {scale}"
         )
-        samples = uniform.rvs(loc=loc, scale=scale, size=(num_samples, self.n_params))
+        samples = uniform.rvs(loc=loc, scale=scale,
+                              size=(num_samples, self.n_params))
         return samples
 
-    def iterative_solve(
+    def forward_model(
             self,
-            time_windows,
-            num_samples=1000,
-            diff=0.5,
-            seed=None,
-            qoi_method='all',
-            best_method='closest',
-    ):
+            x0: List[float],
+            times: np.ndarray,
+            lam: np.ndarray,
+    ) -> np.ndarray:
         """
-        Iterative Solver
+        Forward Model
 
-        Iterative between solving and pushing model forward using sequential
-        MUD algorithm for parameter estimation.
+        Stubb meant to be overwritten by inherited classes.
 
         Parameters
         ----------
-
-        Returns
-        -------
-
-        Note
-        ----
-        This will reset the state of the class and erase its previous dataframes.
+        x0 : List[float]
+            Initial conditions.
+        times: np.ndarray[float]
+            Time steps to solve the model for. Note that times[0] the model
+            is assumed to be at state x0.
+        parmaeters: Tuple
+            Tuple of parameters to set for model run. These should correspond
+            to the model parameters being varied.
         """
-        self.diff = diff
-        if self.samples is not None:
-            yn = input('Previous run exists. Do you want to reset state? y/(n)')
-            if yn == 'n':
-                return
-            self.push_forwards = []
-            self.states = []
+        raise NotImplementedError(f'forward_model() base class skeleton.')
 
-        np.random.seed(seed)  # Initial seed for sampling
-        self.samples = self.get_uniform_initial_samples(
-            scale=diff, num_samples=num_samples
-        )
-        if len(time_windows) < 2:
-            time_windows.insert(0, 0)
-        time_windows.sort()
-        self.t0 = time_windows[0]
 
-        logger.info(f"Starting solve over time : {time_windows}")
-        self.sample_weights = None
-        for it, tf in enumerate(time_windows[1:]):
-            logger.info(
-                f"Iteration {it} [{self.t0}, {tf}]: "
-            )
-            self.forward_solve(tf, samples=self.samples)
-            mud_args = self.get_mud_args()
-            if it != 0:
-                self.mud_prob.update_iteration(
-                        *[mud_args[x] for x in
-                          ['lam', 'q_lam', 'data', 'std_dev']])
-            elif it == 0:
-                self.mud_prob = SequentialMUDProblem(
-                        *[mud_args[x] for x in
-                          ['lam', 'q_lam', 'data', 'std_dev']],
-                        max_nc=mud_args['max_nc'],
-                        qoi_method=qoi_method,
-                        best_method=best_method)
-            self.mud_prob.solve()
-            self.iteration_update()
-            logger.info(
-                f" Summary:\n{log_table(self.get_summary_row())}"
-            )
-
-    def iteration_update(
+    def plot_state(
             self,
+            state_idx: int = 0,
     ):
         """
-        Perform an update after a Sequential MUD estimation
+        Plot state evolution over time
         """
-        action = self.mud_prob.result['action'].values[0]
-        if action == 'UPDATE':
-            logger.info('Drawing from updated distribution')
-            self.samples = self.mud_prob.sample_update(self.n_samples)
-            self.sample_weights = None
-        elif action == 'RESET':
-            logger.info('Reseting to initial distribution')
-            self.samples = self.get_uniform_initial_samples(
-                scale=self.diff, num_samples=self.n_samples
-            )
-        elif action == 'RE-WEIGHT':
-            logger.info('Re-weighting current samples')
-            self.sample_weights = self.mud_prob.state['weight'] * \
-                self.mud_prob.state['ratio']
-        else:
-            logger.info('No action taken, continuing with current samples')
-
-    def get_summary_row(
-        self,
-    ):
-        """ """
-        fields = [
-            "Action",
-            "NC",
-            "E(r)",
-            "KL",
-        ]
-
-        table = Table(show_header=True, header_style="bold magenta")
-        cols = ["Key", "Value"]
-        for c in cols:
-            table.add_column(c)
-
-        r = self.mud_prob.result
-        row = (
-            f"{r['action'].values[0]}",
-            f"{r['nc'].values[0]}",
-            f"{r['e_r'].values[0]:0.3f}",
-            f"{r['kl'].values[0]:0.3f}",
-        )
-        for i in range(len(fields)):
-            table.add_row(fields[i], row[i])
-
-        return table

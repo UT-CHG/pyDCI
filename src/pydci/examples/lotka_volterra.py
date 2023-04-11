@@ -4,6 +4,7 @@ Lotka-Volterra (Predator-Prey) System
 import numpy as np
 from scipy.integrate import odeint
 
+from pydci.Model import DynamicModel
 
 def lotka_volterra_system(
     states: list[float],
@@ -41,39 +42,55 @@ def lotka_volterra_system(
     )
     return xdot
 
+class LotkaVolteraModel(DynamicModel):
 
-def run_lv(x0, times, parameter_samples) -> None:
-    """
-    Runs the RLC model for a specified number of drift windows.
-    Uses the initial state, the drift windows, the times, the get_parameters
-    and save_output methods of the class to integrate the system of ODEs and
-    save the output for each window.
+    # Baseline
+    lv_p1 = [
+        1.1,  # alpha - prey growth rate
+        0.4,  # beta - prey death rate
+        0.5,  # gamma - predator death rate
+        0.1,  # delta - predator growth rate
+    ]
 
-    Parameters
-    ----------
-    self : object
-        The instance of the class
-    """
-    return odeint(lotka_volterra_system, x0, times, args=parameter_samples)
+    # Increase in death rate of prey
+    lv_p2 = [
+        1.1,  # alpha - prey growth rate
+        0.7,  # beta - prey death rate
+        0.5,  # gamma - predator death rate
+        0.1,  # delta - predator growth rate
+    ]
 
+    lv_param_mins = 4 * [0.0]
 
-# Baseline
-lv_p1 = [
-    1.1,  # alpha - prey growth rate
-    0.4,  # beta - prey death rate
-    0.5,  # gamma - predator death rate
-    0.1,  # delta - predator growth rate
-]
+    def __init__(self,
+                 x0=[2, 4],
+                 lam_true=lv_p1,
+                 solve_ts=0.1,
+                 sample_ts=1.0,
+                 measurement_noise=0.25,
+                 **kwargs
+                ):
+        super().__init__(x0, lam_true,
+                         solve_ts=solve_ts,
+                         sample_ts=sample_ts,
+                         measurement_noise=measurement_noise,
+                         param_mins=lv_param_mins,
+                         **kwargs)
 
-# Increase in death rate of prey
-lv_p2 = [
-    1.1,  # alpha - prey growth rate
-    0.7,  # beta - prey death rate
-    0.5,  # gamma - predator death rate
-    0.1,  # delta - predator growth rate
-]
+    def forward_model(x0, times, parameter_samples) -> None:
+        """
+        Runs the RLC model for a specified number of drift windows.
+        Uses the initial state, the drift windows, the times, the get_parameters
+        and save_output methods of the class to integrate the system of ODEs and
+        save the output for each window.
 
-lv_param_mins = 4 * [0.0]
+        Parameters
+        ----------
+        self : object
+            The instance of the class
+        """
+        return odeint(lotka_volterra_system, x0, times, args=parameter_samples)
+
 
 # TODO: Workout seeds -> Put ones to save in dictionaries
 # initial Measure Outcomes
