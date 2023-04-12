@@ -6,6 +6,25 @@ from scipy.integrate import odeint
 
 from pydci.Model import DynamicModel
 
+
+# Baseline
+LV_P1 = [
+    1.1,  # alpha - prey growth rate
+    0.4,  # beta - prey death rate
+    0.5,  # gamma - predator death rate
+    0.1,  # delta - predator growth rate
+]
+
+# Increase in death rate of prey
+LV_P2 = [
+    1.1,  # alpha - prey growth rate
+    0.7,  # beta - prey death rate
+    0.5,  # gamma - predator death rate
+    0.1,  # delta - predator growth rate
+]
+
+LV_PARAM_MINS = 4 * [0.0]
+
 def lotka_volterra_system(
     states: list[float],
     time: np.array,
@@ -44,27 +63,9 @@ def lotka_volterra_system(
 
 class LotkaVolteraModel(DynamicModel):
 
-    # Baseline
-    lv_p1 = [
-        1.1,  # alpha - prey growth rate
-        0.4,  # beta - prey death rate
-        0.5,  # gamma - predator death rate
-        0.1,  # delta - predator growth rate
-    ]
-
-    # Increase in death rate of prey
-    lv_p2 = [
-        1.1,  # alpha - prey growth rate
-        0.7,  # beta - prey death rate
-        0.5,  # gamma - predator death rate
-        0.1,  # delta - predator growth rate
-    ]
-
-    lv_param_mins = 4 * [0.0]
-
     def __init__(self,
                  x0=[2, 4],
-                 lam_true=lv_p1,
+                 lam_true=LV_P1,
                  solve_ts=0.1,
                  sample_ts=1.0,
                  measurement_noise=0.25,
@@ -74,10 +75,10 @@ class LotkaVolteraModel(DynamicModel):
                          solve_ts=solve_ts,
                          sample_ts=sample_ts,
                          measurement_noise=measurement_noise,
-                         param_mins=lv_param_mins,
+                         param_mins=LV_PARAM_MINS,
                          **kwargs)
 
-    def forward_model(x0, times, parameter_samples) -> None:
+    def forward_model(self, x0, times, parameter_samples) -> None:
         """
         Runs the RLC model for a specified number of drift windows.
         Uses the initial state, the drift windows, the times, the get_parameters

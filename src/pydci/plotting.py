@@ -1,5 +1,6 @@
 import pdb
 
+import random
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -19,6 +20,7 @@ bright_colors = [
     "olive",
     "cyan",
 ]
+interval_colors = sns.color_palette("muted", n_colors=50)
 
 # TODO: Matplotlib plotting options
 # plt.backend = "Agg"
@@ -40,7 +42,6 @@ bright_colors = [
 #     "font.size": 12,
 # }
 # plt.rcParams.update(params)
-
 
 def _parse_title(
     self,
@@ -65,183 +66,148 @@ def _parse_title(
 
     return title
 
-
 def plot_state_data(
-    self,
-    state_col,
+    dfs,
+    plot_measurements=True,
+    samples=None,
+    n_samples=10,
     state_idx=0,
     time_col="ts",
     meas_col=None,
-    plot_push_forwards=True,
     window_type=None,
     plot_shifts=True,
     markersize=100,
-    save=False,
-    file_name=None,
+    ax=None,
     figsize= (9, 8),
 ):
     """
-    Plot the X and Y data on two subplots, and add a rectangle for
-    each interval to each subplot.
+    Takes a list of observed data dataframes and plots the state at a certain
+    index over time. If pf_dfs passed as well, pf_dfs are plotted as well.
     """
-    # Set up the figure and axes
-    state_df = pd.concat(prob.dfs["state"], axis=0)
-    number_states = prob.n_states
-    figsize = (18, 8) if number_states <= 2 else (18, 12)
 
-    fig, axes = plt.subplots(nrows=number_states, ncols=1, figsize=figsize)
-    sns.despine(offset=5)
+    labels = []
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
 
     # Plot each column (state) of data on a separate subplot
-        column_name = f"true_vals_{i}"
-        obs_col_name = f"obs_vals_{i}"
-        column_df = state_df[["ts", column_name, obs_col_name, "iteration"]].copy()
-
-        # Add time intervals as vertical lines to the plot
-        if window_type == "line":
-            self.plot_vertical_lines(column_df, axes[i])
-
-        # Add time intervals as rectangles to the plot
-        if window_type == "rectangle":
-            self.plot_rectangles(column_df, column_name, axes[i])
-
-        # Add True State Data to the plot
-        sns.color_palette("bright")
-        bright_colors = [
-            "blue",
-            "red",
-            "purple",
-            "brown",
-            "pink",
-            "gray",
-            "olive",
-            "cyan",
-        ]
+    for iteration, df in enumerate(dfs):
+        n_ts = len(df)
+        n_states = len([x for x in df.columns if x.startswith('q_lam_true')])
 
         sns.lineplot(
             x="ts",
-            y=column_name,
-            ax=axes[i],
-            color=bright_colors[i],
-            data=state_df,
+            y=f"q_lam_true_{state_idx}",
+            ax=ax,
+            color="blue",
+            data=df,
             linewidth=2,
+            marker='o',
             label="True State",
         )
-
         # Add Measurement Data to the plot
         if plot_measurements:
             sns.scatterplot(
                 x="ts",
-                y=obs_col_name,
-                ax=axes[i],
+                y=f"q_lam_obs_{state_idx}",
+                ax=ax,
                 color="black",
-                data=state_df,
+                data=df,
                 s=markersize,
                 marker="*",
                 label="Measurements",
                 zorder=10,
             )
-
         # Add Push Forward Data to the plot
-        if plot_push_forwards:
-            sns.lineplot(
-                x="ts",
-                y=f"best_{i}",
-                ax=axes[i],
-                data=state_df,
-                color="purple",
-                linestyle="--",
-                alpha=0.5,
-                label="Best Sample",
-            )
-            sns.lineplot(
-                x="ts",
-                y=f"worst_{i}",
-                ax=axes[i],
-                color="purple",
-                data=state_df,
-                linestyle=":",
-                alpha=0.5,
-                label="Worst Sample",
-            )
-            rand_cols = [
-                x
-                for x in state_df.columns
-                if x.startswith("random_") and x.endswith(f"_{i}")
-            ]
-            for rc in rand_cols:
+        if samples is not None:
+            cols = [f'q_lam_{i}' for i in range(n_states * n_ts)]
+            max_samples = len(samples[iteration])
+            to_plot = n_samples if n_samples < max_samples else n_samples
+            rand_idxs = random.choices(range(max_samples), k=to_plot)
+            for i, sample in enumerate(
+                    samples[iteration][cols].loc[rand_idxs].iterrows()):
+                sample_state_data = np.array([df['ts'].values, np.array(
+                    sample[1]).reshape(2,2)[:, state_idx]]).T
+                label = None if i != (to_plot - 1) else 'Samples'
                 sns.lineplot(
                     x="ts",
-                    y=rc,
+                    y=f'q_lam_{state_idx}',
                     legend=False,
-                    ax=axes[i],
+                    ax=ax,
                     color="purple",
-                    data=state_df,
+                    data=pd.DataFrame(sample_state_data,
+                                      columns=['ts', f'q_lam_{state_idx}']),
                     alpha=0.2,
+                    marker='o',
+                    label=label,
                 )
+            #TODO: implement best and worst plots if columns present
+            # sns.lineplot(
+            #     x="ts",
+            #     y=f"best_{i}",
+            #     ax=axes[i],
+            #     data=state_df,
+            #     color="purple",
+            #     linestyle="--",
+            #     alpha=0.5,
+            #     label="Best Sample",
+            # )
+            # sns.lineplot(
+            #     x="ts",
+            #     y=f"worst_{i}",
+            #     ax=axes[i],
+            #     color="purple",
+            #     data=state_df,
+            #     linestyle=":",
+            #     alpha=0.5,
+            #     label="Worst Sample",
+            # )
 
-        # Add Shifts as vertical lines to the plot
-        if plot_shifts:
-            for j, shift in enumerate(prob.param_shifts.keys()):
-                axes[i].axvline(
-                    x=shift,
-                    linewidth=3,
-                    color="orange",
-                    label="Shift" if j == 0 else None,
-                )
-
-        axes[i].legend(loc="upper right", fontsize=12)
-        axes[i].set_title(f"State {i} Temporal Evolution")
-        axes[i].set_xlabel("Time Step")
-        axes[i].set_ylabel(f"State {i}")
-
-    plt.tight_layout()
-
-    return axes
-
-
-def plot_vertical_lines(self, df, ax):
-    """
-    Add vertical lines for each interval to the given axis.
-    """
-
-    # Create a DataFrame with the start and end times of each interval
-    intervals = df["iteration"].unique()
-    interval_starts = [df[df["iteration"] == i]["ts"].min() for i in intervals]
-    interval_ends = [df[df["iteration"] == i]["ts"].max() for i in intervals]
-    interval_df = pd.DataFrame(
-        {"iteration": intervals, "Start": interval_starts, "End": interval_ends}
-    )
-
-    # Plot vertical lines at the start of each interval
-    for i, row in interval_df.iterrows():
-        if i == interval_df.shape[0] - 1:
+        if window_type == 'line':
             ax.axvline(
-                row["Start"],
+                df['ts'].min(),
                 linestyle="--",
                 color="green",
                 alpha=1,
-                label="Time Interval",
+                label=None,
             )
-        ax.axvline(row["Start"], linestyle="--", color="green", alpha=1)
+        elif window_type == 'rectangle':
+            xmin = df['ts'].min()
+            xmax = df['ts'].max()
+            ymin, ymax = ax.get_ylim()
+            rect = Rectangle((xmin, ymin), xmax - xmin,
+                             ymax - ymin, linewidth=0, alpha=0.3)
+            rect.set_facecolor(interval_colors[i])
+            ax.add_patch(rect)
 
 
-def plot_rectangles(self, df, column_name, ax):
-    """
-    Add a rectangle for each interval to the specified axis object.
-    """
-    num_intervals = len(df["iteration"].unique())
-    colors = sns.color_palette("muted", n_colors=num_intervals)
-
-    for i, (_, state_df_interval) in enumerate(df.groupby("iteration")):
-        xmin, xmax = (
-            state_df_interval["ts"].min(),
-            state_df_interval["ts"].max(),
+        # Add Shifts as vertical lines to the plot
+        if plot_shifts:
+            max_si = df['shift_idx'].max()
+            for si, sd in df[df['shift_idx'] > 0].groupby('shift_idx'):
+                label = None if not ((si == max_si) and
+                                     (iteration == len(dfs))) else 'Shift'
+                ax.axvline(
+                    x=sd['ts'].min(),
+                    linewidth=3,
+                    color="orange",
+                    label=label
+                )
+    if window_type == 'line':
+        ax.axvline(
+            df['ts'].max(),
+            linestyle="--",
+            color="green",
+            alpha=1,
+            label="Time Interval",
         )
-        ymin, ymax = df[column_name].min() - 0.5, df[column_name].max() + 3.5
-        rect = Rectangle((xmin, ymin), xmax - xmin, ymax - ymin, linewidth=0, alpha=0.3)
-        rect.set_facecolor(colors[i])
-        ax.add_patch(rect)
+    ax.legend(fontsize=12)
+    ax.set_title(f"State {state_idx} Temporal Evolution")
+    ax.set_xlabel("Time Step")
+    ax.set_ylabel(f"State {state_idx}")
+
+    plt.tight_layout()
+
+    return ax
 
 
 def plot_parameters(

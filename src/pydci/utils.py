@@ -2,6 +2,7 @@
 pyDCI Utilities
 
 """
+import pdb
 from typing import List, Tuple, Union
 
 import numpy as np
@@ -123,19 +124,23 @@ def get_uniform_box(center, factor=0.5, mins=None, maxs=None):
     return domain
 
 
-def put_df(df, name, val, size=1):
+def put_df(df, name, val, size=1, mask=None):
     """
     Given an n-m dimensional `val`, stores into dataframe `df` with `n`
     rows by unpacking the `m` columns of val into separate columns with
     names `{name}_{j}` where j is the index of the column.
     """
+    idxs = range(size)
+    if mask is not None:
+        pdb.set_trace()
+        idxs = [i for i in idxs if mask[i]]
     if len([x for x in df.columns if x.startswith(f"{name}_")]) > 0:
-        for idx in range(size):
-            df[f"{name}_{idx}"] = val[:, idx]
+        for i, idx in enumerate(idxs):
+            df[f"{name}_{i}"] = val[:, idx]
     else:
         concat_cols = {}
-        for idx in range(size):
-            concat_cols[f"{name}_{idx}"] = val[:, idx]
+        for i, idx in enumerate(idxs):
+            concat_cols[f"{name}_{i}"] = val[:, idx]
         df = pd.concat([df, pd.DataFrame(concat_cols)], axis=1)
 
     return df
