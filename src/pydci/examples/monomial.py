@@ -3,7 +3,7 @@ Simple Example
 """
 import numpy as np
 from scipy.stats import distributions as ds  # type: ignore
-from scipy.stats import norm, uniform # type: ignore
+from scipy.stats import norm, uniform  # type: ignore
 
 
 def monomial_1D(
@@ -66,4 +66,3 @@ def monomial_1D(
     q_lam = (lam**p).reshape(n_samples, -1)
     pi_obs = norm(data, scale=std_dev)
     return lam, q_lam, data, std_dev
-

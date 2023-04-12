@@ -25,6 +25,7 @@ LV_P2 = [
 
 LV_PARAM_MINS = 4 * [0.0]
 
+
 def lotka_volterra_system(
     states: list[float],
     time: np.array,
@@ -61,22 +62,26 @@ def lotka_volterra_system(
     )
     return xdot
 
-class LotkaVolteraModel(DynamicModel):
 
-    def __init__(self,
-                 x0=[2, 4],
-                 lam_true=LV_P1,
-                 solve_ts=0.1,
-                 sample_ts=1.0,
-                 measurement_noise=0.25,
-                 **kwargs
-                ):
-        super().__init__(x0, lam_true,
-                         solve_ts=solve_ts,
-                         sample_ts=sample_ts,
-                         measurement_noise=measurement_noise,
-                         param_mins=LV_PARAM_MINS,
-                         **kwargs)
+class LotkaVolteraModel(DynamicModel):
+    def __init__(
+        self,
+        x0=[2, 4],
+        lam_true=LV_P1,
+        solve_ts=0.1,
+        sample_ts=1.0,
+        measurement_noise=0.25,
+        **kwargs,
+    ):
+        super().__init__(
+            x0,
+            lam_true,
+            solve_ts=solve_ts,
+            sample_ts=sample_ts,
+            measurement_noise=measurement_noise,
+            param_mins=LV_PARAM_MINS,
+            **kwargs,
+        )
 
     def forward_model(self, x0, times, parameter_samples) -> None:
         """

@@ -92,12 +92,7 @@ class DynamicModel:
 
         return ts, shift_idx, param_vals
 
-    def forward_solve(self,
-                      tf,
-                      x0=None,
-                      t0=None,
-                      samples=None,
-                      samples_x0=None):
+    def forward_solve(self, tf, x0=None, t0=None, samples=None, samples_x0=None):
         """
         Forward Model Solve
 
@@ -136,8 +131,7 @@ class DynamicModel:
             idxs = shift_idx == i
             times = ts[idxs]
             lam_true = param_vals[idxs, :][0]
-            true_vals[idxs] = self.forward_model(x0_temp,
-                                                 times, tuple(lam_true))
+            true_vals[idxs] = self.forward_model(x0_temp, times, tuple(lam_true))
             x0_temp = true_vals[idxs][-1]
 
         sample_step = int(self.sample_ts / self.solve_ts)
@@ -184,32 +178,36 @@ class DynamicModel:
         data_df["shift_idx"] = shift_idx
         data_df["sample_flag"] = sample_ts_flag
         data_df = put_df(data_df, "lam_true", param_vals)
-        data_df = put_df(data_df, "q_lam_true",
-                          true_vals, size=self.n_states)
-        data_df = put_df(data_df, "q_lam_obs",
-                          measurements, size=self.n_states)
+        data_df = put_df(data_df, "q_lam_true", true_vals, size=self.n_states)
+        data_df = put_df(data_df, "q_lam_obs", measurements, size=self.n_states)
         # self.states.append(state_df)
-        sub_df = data_df[data_df['sample_flag'] == True]
+        sub_df = data_df[data_df["sample_flag"] == True]
         args = {
-            "data": np.reshape(get_df(sub_df, 'q_lam_obs', size=self.n_states),
-                               (len(sub_df) * self.n_states, -1)),
+            "data": np.reshape(
+                get_df(sub_df, "q_lam_obs", size=self.n_states),
+                (len(sub_df) * self.n_states, -1),
+            ),
             "std_dev": self.measurement_noise,
         }
         if push_forwards is not None:
             full_samples_df = pd.DataFrame(
-                    data=samples,
-                    columns=[f'lam_{x}' for x in range(self.n_params)])
+                data=samples, columns=[f"lam_{x}" for x in range(self.n_params)]
+            )
             samples_df = full_samples_df.copy()
-            full_samples_df = put_df(samples_df, 'q_lam',
-                              np.reshape(push_forwards, (len(samples), -1)),
-                              size=self.n_states * len(ts))
+            full_samples_df = put_df(
+                samples_df,
+                "q_lam",
+                np.reshape(push_forwards, (len(samples), -1)),
+                size=self.n_states * len(ts),
+            )
             samples_df = put_df(
-                    samples_df, 'q_lam',
-                    np.reshape(push_forwards[:,sample_ts_flag,:],
-                               (len(samples), -1)),
-                    size=self.n_states * np.sum(sample_ts_flag))
+                samples_df,
+                "q_lam",
+                np.reshape(push_forwards[:, sample_ts_flag, :], (len(samples), -1)),
+                size=self.n_states * np.sum(sample_ts_flag),
+            )
 
-            args['samples'] = samples_df
+            args["samples"] = samples_df
 
             # Only append if we have samples as well
             self.data.append(data_df)
@@ -230,18 +228,14 @@ class DynamicModel:
         )
         return init_conds
 
-    def get_uniform_initial_samples(self,
-                                    center=None,
-                                    scale=0.5,
-                                    num_samples=1000):
+    def get_uniform_initial_samples(self, center=None, scale=0.5, num_samples=1000):
         """
         Generate initial samples from uniform distribution over domain set by
         `self.set_domain`.
         """
         center = self.lam_true if center is None else center
         domain = get_uniform_box(
-            self.lam_true, factor=scale,
-            mins=self.param_mins, maxs=self.param_maxs
+            self.lam_true, factor=scale, mins=self.param_mins, maxs=self.param_maxs
         )
         loc = domain[:, 0]
         scale = domain[:, 1] - domain[:, 0]
@@ -249,15 +243,14 @@ class DynamicModel:
             f"Drawing {num_samples} from uniform at:\n"
             + f"\tloc: {loc}\n\tscale: {scale}"
         )
-        samples = uniform.rvs(loc=loc, scale=scale,
-                              size=(num_samples, self.n_params))
+        samples = uniform.rvs(loc=loc, scale=scale, size=(num_samples, self.n_params))
         return samples
 
     def forward_model(
-            self,
-            x0: List[float],
-            times: np.ndarray,
-            lam: np.ndarray,
+        self,
+        x0: List[float],
+        times: np.ndarray,
+        lam: np.ndarray,
     ) -> np.ndarray:
         """
         Forward Model
@@ -275,8 +268,7 @@ class DynamicModel:
             Tuple of parameters to set for model run. These should correspond
             to the model parameters being varied.
         """
-        raise NotImplementedError(f'forward_model() base class skeleton.')
-
+        raise NotImplementedError(f"forward_model() base class skeleton.")
 
     def plot_state(
         self,
@@ -291,7 +283,7 @@ class DynamicModel:
         plot_shifts=True,
         markersize=100,
         ax=None,
-        figsize= (9, 8),
+        figsize=(9, 8),
     ):
         """
         Takes a list of observed data dataframes and plots the state at a certain
@@ -303,7 +295,7 @@ class DynamicModel:
         # Plot each column (state) of data on a separate subplot
         for iteration, df in enumerate(self.data):
             n_ts = len(df)
-            n_states = len([x for x in df.columns if x.startswith('q_lam_true')])
+            n_states = len([x for x in df.columns if x.startswith("q_lam_true")])
 
             sns.lineplot(
                 x="ts",
@@ -327,25 +319,32 @@ class DynamicModel:
                     label="Measurements",
                     zorder=10,
                 )
+            ylims_save = ax.get_ylim()
             # Add Push Forward Data to the plot
             if plot_samples:
-                cols = [f'q_lam_{i}' for i in range(n_states * n_ts)]
+                cols = [f"q_lam_{i}" for i in range(n_states * n_ts)]
                 max_samples = len(self.samples[iteration])
                 to_plot = n_samples if n_samples < max_samples else n_samples
                 rand_idxs = random.choices(range(max_samples), k=to_plot)
                 sub_samples = self.samples[iteration][cols].loc[rand_idxs]
                 for i, sample in enumerate(sub_samples.iterrows()):
                     sample_df = pd.DataFrame(
-                            np.array([df['ts'].values, np.array(
-                                sample[1]).reshape(n_ts,
-                                                   n_states)[:, state_idx]]).T,
-                            columns=['ts', f'q_lam_{state_idx}'])
-                    sample_df['sample_flag'] = df['sample_flag']
-                    label = f'Samples ({to_plot} random)'
+                        np.array(
+                            [
+                                df["ts"].values,
+                                np.array(sample[1]).reshape(n_ts, n_states)[
+                                    :, state_idx
+                                ],
+                            ]
+                        ).T,
+                        columns=["ts", f"q_lam_{state_idx}"],
+                    )
+                    sample_df["sample_flag"] = df["sample_flag"]
+                    label = f"Samples ({to_plot} random)"
                     label = None if i != (to_plot - 1) else label
                     sns.lineplot(
                         x="ts",
-                        y=f'q_lam_{state_idx}',
+                        y=f"q_lam_{state_idx}",
                         legend=False,
                         ax=ax,
                         color="purple",
@@ -363,19 +362,25 @@ class DynamicModel:
                     #     alpha=0.2,
                     #     marker='o',
                     # )
-                #TODO: implement best and worst plots if columns present
+                # TODO: implement best and worst plots if columns present
                 s_it = self.samples[iteration]
-                if 'best_flag' in s_it.columns is not None:
-                    best_sample = s_it[s_it['best_flag'] == True][cols]
+                if "best_flag" in s_it.columns is not None:
+                    best_sample = s_it[s_it["best_flag"] == True][cols]
                     best_df = pd.DataFrame(
-                            np.array([df['ts'].values, np.array(
-                                best_sample).reshape(n_ts,
-                                                     n_states)[:, state_idx]]).T,
-                            columns=['ts', f'q_lam_{state_idx}'])
-                    best_df['sample_flag'] = df['sample_flag']
+                        np.array(
+                            [
+                                df["ts"].values,
+                                np.array(best_sample).reshape(n_ts, n_states)[
+                                    :, state_idx
+                                ],
+                            ]
+                        ).T,
+                        columns=["ts", f"q_lam_{state_idx}"],
+                    )
+                    best_df["sample_flag"] = df["sample_flag"]
                     sns.lineplot(
                         x="ts",
-                        y=f'q_lam_{state_idx}',
+                        y=f"q_lam_{state_idx}",
                         legend=False,
                         ax=ax,
                         color="purple",
@@ -383,16 +388,16 @@ class DynamicModel:
                         linestyle="--",
                         alpha=0.5,
                         label=f"Best Sample",
-                   )
+                    )
                     sns.scatterplot(
                         x="ts",
-                        y=f'q_lam_{state_idx}',
+                        y=f"q_lam_{state_idx}",
                         legend=False,
                         ax=ax,
                         color="purple",
-                        data=best_df[best_df['sample_flag'] == True],
+                        data=best_df[best_df["sample_flag"] == True],
                         alpha=0.2,
-                        marker='o',
+                        marker="o",
                     )
                 # sns.lineplot(
                 #     x="ts",
@@ -404,39 +409,41 @@ class DynamicModel:
                 #     alpha=0.5,
                 #     label="Worst Sample",
                 # )
+            ax.set_ylim(ylims_save)
 
-            if window_type == 'line':
+            if window_type == "line":
                 ax.axvline(
-                    df['ts'].min(),
+                    df["ts"].min(),
                     linestyle="--",
                     color="green",
                     alpha=1,
                     label=None,
                 )
-            elif window_type == 'rectangle':
-                xmin = df['ts'].min()
-                xmax = df['ts'].max()
+            elif window_type == "rectangle":
+                xmin = df["ts"].min()
+                xmax = df["ts"].max()
                 ymin, ymax = ax.get_ylim()
-                rect = Rectangle((xmin, ymin), xmax - xmin,
-                                 ymax - ymin, linewidth=0, alpha=0.3)
+                rect = Rectangle(
+                    (xmin, ymin), xmax - xmin, ymax - ymin, linewidth=0, alpha=0.3
+                )
                 rect.set_facecolor(interval_colors[i])
                 ax.add_patch(rect)
 
             # Add Shifts as vertical lines to the plot
             if plot_shifts:
-                max_si = df['shift_idx'].max()
-                for si, sd in df[df['shift_idx'] > 0].groupby('shift_idx'):
+                max_si = df["shift_idx"].max()
+                for si, sd in df[df["shift_idx"] > 0].groupby("shift_idx"):
                     ax.axvline(
-                        x=sd['ts'].min(),
+                        x=sd["ts"].min(),
                         linewidth=3,
                         color="orange",
-                        label=None if not ((si == max_si) and
-                                           (iteration == len(self.data)))
-                        else 'Shift'
+                        label=None
+                        if not ((si == max_si) and (iteration == len(self.data)))
+                        else "Shift",
                     )
-        if window_type == 'line':
+        if window_type == "line":
             ax.axvline(
-                df['ts'].max(),
+                df["ts"].max(),
                 linestyle="--",
                 color="green",
                 alpha=1,

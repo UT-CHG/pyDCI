@@ -108,8 +108,8 @@ class DCIProblem(object):
         self,
         samples,
         pi_obs,
-        pi_in = None,
-        pi_pr = None,
+        pi_in=None,
+        pi_pr=None,
         weights=None,
     ):
         self.init_prob(samples, pi_obs, pi_in=pi_in, pi_pr=pi_pr)
@@ -135,12 +135,7 @@ class DCIProblem(object):
         """
         return self.lam.shape[0]
 
-    def init_prob(self,
-                  samples,
-                  pi_obs,
-                  pi_in=None,
-                  pi_pr=None,
-                  weights=None):
+    def init_prob(self, samples, pi_obs, pi_in=None, pi_pr=None, weights=None):
         """
         Initialize problem
 
@@ -152,16 +147,16 @@ class DCIProblem(object):
         """
         if isinstance(samples, pd.DataFrame):
             cols = samples.columns
-            n_params = len([x for x in cols if x.startswith('l')])
+            n_params = len([x for x in cols if x.startswith("l")])
             n_states = len(cols) - n_params
-            self.lam = get_df(samples, 'lam', size=n_params)
-            self.q_lam = get_df(samples, 'q_lam', size=n_states)
+            self.lam = get_df(samples, "lam", size=n_params)
+            self.q_lam = get_df(samples, "q_lam", size=n_states)
         else:
             self.lam = set_shape(np.array(samples[0]), (1, -1))
             self.q_lam = set_shape(np.array(samples[1]), (-1, 1))
         self.state = pd.DataFrame(
             np.zeros((self.n_samples, 6)),
-            columns=["weight", "pi_in", "pi_pr", "pi_obs", "ratio", "pi_up"]
+            columns=["weight", "pi_in", "pi_pr", "pi_obs", "ratio", "pi_up"],
         )
         self.state = put_df(self.state, "q_lam", self.q_lam, size=self.n_states)
         self.state = put_df(self.state, "lam", self.lam, size=self.n_params)
@@ -174,8 +169,7 @@ class DCIProblem(object):
         }
         self.result = None
 
-    def pi_in(self,
-              values=None):
+    def pi_in(self, values=None):
         """
         Evaluate the initial distribution.
 
@@ -183,19 +177,16 @@ class DCIProblem(object):
         or calculated from a gaussain kernel density estimate (using scipy) on
         the initial samples, weighted by the sample weights.
         """
-        if self.dists['pi_in'] is None:
-            logger.info('Calculating pi_in by computing KDE on lam')
-            self.dists['pi_in'] = gkde(
-                self.lam.T, weights=self.state["weight"]
-            )
+        if self.dists["pi_in"] is None:
+            logger.info("Calculating pi_in by computing KDE on lam")
+            self.dists["pi_in"] = gkde(self.lam.T, weights=self.state["weight"])
         values = self.lam if values is None else values
-        if isinstance(self.dists['pi_in'], gkde):
+        if isinstance(self.dists["pi_in"], gkde):
             return self.dists["pi_in"].pdf(values.T).T
         else:
             return self.dists["pi_in"].pdf(values)
 
-    def pi_pr(self,
-              values=None):
+    def pi_pr(self, values=None):
         """
         Evaluate the predicted distribution.
 
@@ -204,32 +195,28 @@ class DCIProblem(object):
         (using scipy) on the push forward of the initial samples, q_lam,
         weighted by the sample weights.
         """
-        if self.dists['pi_pr'] is None:
-            logger.info('Calculating pi_pr by computing KDE on q_lam')
-            self.dists['pi_pr'] = gkde(
-                self.q_lam.T, weights=self.state["weight"]
-            )
+        if self.dists["pi_pr"] is None:
+            logger.info("Calculating pi_pr by computing KDE on q_lam")
+            self.dists["pi_pr"] = gkde(self.q_lam.T, weights=self.state["weight"])
         values = self.q_lam if values is None else values
-        if isinstance(self.dists['pi_pr'], gkde):
+        if isinstance(self.dists["pi_pr"], gkde):
             return self.dists["pi_pr"].pdf(values.T).T.ravel()
         else:
             return self.dists["pi_pr"].pdf(values).prod(axis=1)
 
-    def pi_obs(self,
-               values=None):
+    def pi_obs(self, values=None):
         """
         Evaluate the observed distribution.
 
         Observed distribion is set explicitly in the call to `init_prob`.
         """
         values = self.q_lam if values is None else values
-        if isinstance(self.dists['pi_obs'], gkde):
+        if isinstance(self.dists["pi_obs"], gkde):
             return self.dists["pi_obs"].pdf(values.T).T.ravel()
         else:
             return self.dists["pi_obs"].pdf(values).prod(axis=1)
 
-    def pi_up(self,
-              values=None):
+    def pi_up(self, values=None):
         """
         Evaluate Updated Distribution
 
@@ -246,8 +233,7 @@ class DCIProblem(object):
         values = self.lam if values is None else values
         return self.dists["pi_up"].pdf(values.T).T
 
-    def pi_pf(self,
-              values=None):
+    def pi_pf(self, values=None):
         """
         Evaluate Updated Distribution
 
@@ -264,7 +250,7 @@ class DCIProblem(object):
         values = self.q_lam if values is None else values
         return self.dists["pi_pf"].pdf(values.T).T
 
-    def sample_dist(self, num_samples=1, dist='pi_up'):
+    def sample_dist(self, num_samples=1, dist="pi_up"):
         """
         Sample Stored Distribution
 
@@ -289,7 +275,7 @@ class DCIProblem(object):
         if isinstance(self.dists[dist], gkde):
             return self.self.dists[dist].resample(size=num_samples).T
         else:
-            dim = self.n_params if dist == 'pi_in' else self.n_states
+            dim = self.n_params if dist == "pi_in" else self.n_states
             return self.self.dists[dist].rvs((num_samples, dim)).T
 
     def set_weights(self, weights: ArrayLike = None):
@@ -340,8 +326,7 @@ class DCIProblem(object):
         self.state["pi_in"] = self.pi_in()
         self.state["pi_obs"] = self.pi_obs()
         self.state["pi_pr"] = self.pi_pr()
-        self.state["ratio"] = np.divide(self.state["pi_obs"],
-                                        self.state["pi_pr"])
+        self.state["ratio"] = np.divide(self.state["pi_obs"], self.state["pi_pr"])
         self.state["pi_up"] = np.multiply(
             self.state["pi_in"] * self.state["weight"], self.state["ratio"]
         )
@@ -596,9 +581,9 @@ class DCIProblem(object):
         ax=None,
         reshape=(-1, 1),
         figsize=(8, 8),
-        plot_type='scatter',
+        plot_type="scatter",
         label=True,
-        **kwargs
+        **kwargs,
     ):
         """
         Plot the X and Y data on two subplots, and add a rectangle for
@@ -610,24 +595,25 @@ class DCIProblem(object):
 
         sns.color_palette("bright")
 
-        cols = [f'q_lam_{i}' for i in range(self.n_states)]
+        cols = [f"q_lam_{i}" for i in range(self.n_states)]
         qoi_mask = np.arange(self.n_states) if qoi_mask is None else qoi_mask
 
         if isinstance(sample_idx, int):
             sample_idx = [sample_idx]
         elif not isinstance(sample_idx, list):
-            raise ValueError('Sample idx must be an integer or integer list')
+            raise ValueError("Sample idx must be an integer or integer list")
         for si in sample_idx:
-            sample = np.array(self.state[cols].loc[si]).reshape(
-                    reshape)[:, qoi_mask]
-            sample_df = pd.DataFrame(np.array([qoi_mask, sample[0]]).reshape(
-                    len(qoi_mask), 2), columns=['i', 'q_lam_i'])
+            sample = np.array(self.state[cols].loc[si]).reshape(reshape)[:, qoi_mask]
+            sample_df = pd.DataFrame(
+                np.array([qoi_mask, sample[0]]).reshape(len(qoi_mask), 2),
+                columns=["i", "q_lam_i"],
+            )
 
             lab = None if not label else f"Sample {si} State"
-            if plot_type == 'scatter':
+            if plot_type == "scatter":
                 sns.scatterplot(
-                    x='i',
-                    y='q_lam_i',
+                    x="i",
+                    y="q_lam_i",
                     ax=ax,
                     color="blue",
                     data=sample_df,
@@ -635,8 +621,8 @@ class DCIProblem(object):
                 )
             else:
                 sns.lineplot(
-                    x='i',
-                    y='q_lam_i',
+                    x="i",
+                    y="q_lam_i",
                     ax=ax,
                     color="blue",
                     data=sample_df,
@@ -661,21 +647,22 @@ class DCIProblem(object):
         return axs
 
     def param_density_plots(
-            self,
-            lam_true=None,
-            base_size=4,
-            max_np=9,
+        self,
+        lam_true=None,
+        base_size=4,
+        max_np=9,
     ):
 
         base_size = 4
         n_params = self.n_params if self.n_params <= max_np else max_np
         grid_plot = self._closest_factors(n_params)
-        fig, ax = plt.subplots(grid_plot[0], grid_plot[1],
-                               figsize=(grid_plot[0]*(base_size + 2),
-                                        grid_plot[0]*base_size))
+        fig, ax = plt.subplots(
+            grid_plot[0],
+            grid_plot[1],
+            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
+        )
 
-        lam_true = set_shape(lam_true, (1, -1)) if lam_true \
-                is not None else lam_true
+        lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
         for i, ax in enumerate(ax.flat):
             self.plot_L(param_idx=i, lam_true=lam_true, ax=ax)
 
@@ -690,15 +677,14 @@ class DCIProblem(object):
         """
         kl = self.result["kl"].values[0]
         e_r = self.result["e_r"].values[0]
-        title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + \
-                f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
+        title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
 
         return title
 
     def _closest_factors(self, n):
         for i in range(int(n**0.5), 0, -1):
             if n % i == 0:
-                return (i, n//i)
+                return (i, n // i)
 
 
 class MUDProblem(DCIProblem):
@@ -769,16 +755,11 @@ class MUDProblem(DCIProblem):
         pi_pr=None,
         weights=None,
     ):
-        self.init_prob(samples, data, std_dev,
-                       pi_in=pi_in, pi_pr=pi_pr, weights=weights)
+        self.init_prob(
+            samples, data, std_dev, pi_in=pi_in, pi_pr=pi_pr, weights=weights
+        )
 
-    def init_prob(self,
-                  samples,
-                  data,
-                  std_dev,
-                  pi_in=None,
-                  pi_pr=None,
-                  weights=None):
+    def init_prob(self, samples, data, std_dev, pi_in=None, pi_pr=None, weights=None):
         """
         Initialize problem
 
@@ -792,8 +773,7 @@ class MUDProblem(DCIProblem):
         self.std_dev = std_dev
         self.data = set_shape(np.array(data), (-1, 1))
         pi_obs = dist.norm(loc=np.mean(data), scale=std_dev)
-        super().init_prob(samples, pi_obs,
-                          pi_in=pi_in, pi_pr=pi_pr, weights=weights)
+        super().init_prob(samples, pi_obs, pi_in=pi_in, pi_pr=pi_pr, weights=weights)
         self.mud_point = None
 
     def solve(self):
@@ -853,15 +833,15 @@ class MUDProblem(DCIProblem):
             plotted and (2) List of labels that were plotted, in order plotted.
         """
         ax, labels = super().plot_L(
-                df=df,
-                param_idx=param_idx,
-                param_col=param_col,
-                ratio_col=ratio_col,
-                plot_initial=plot_initial,
-                plot_legend=plot_legend,
-                ax=ax,
-                figsize=figsize,
-            )
+            df=df,
+            param_idx=param_idx,
+            param_col=param_col,
+            ratio_col=ratio_col,
+            plot_initial=plot_initial,
+            plot_legend=plot_legend,
+            ax=ax,
+            figsize=figsize,
+        )
 
         # Generate vertical lines for true values
         if lam_true is not None:
@@ -879,8 +859,7 @@ class MUDProblem(DCIProblem):
 
         if plot_mud is not None:
             mud_label = (
-                f"$\lambda^{{MUD}}_{param_idx} = " +
-                f"{self.mud_point[param_idx]:.4f}$"
+                f"$\lambda^{{MUD}}_{param_idx} = " + f"{self.mud_point[param_idx]:.4f}$"
             )
             ax.axvline(
                 x=self.mud_point[param_idx],
@@ -913,11 +892,11 @@ class MUDProblem(DCIProblem):
         fig, axs = plt.subplots(1, 2, figsize=(14, 6))
         lam_kwargs = {} if lam_kwargs is None else lam_kwargs
         q_lam_kwargs = {} if q_lam_kwargs is None else q_lam_kwargs
-        lam_kwargs['ax'] = axs[0]
-        q_lam_kwargs['ax'] = axs[1]
+        lam_kwargs["ax"] = axs[0]
+        q_lam_kwargs["ax"] = axs[1]
         self.plot_L(**lam_kwargs)
         self.plot_D(**q_lam_kwargs)
-        lam_true = lam_kwargs.get('lam_true', None)
+        lam_true = lam_kwargs.get("lam_true", None)
         fig.suptitle(self._parse_title(lam_true=lam_true))
         fig.tight_layout()
 
@@ -932,13 +911,15 @@ class MUDProblem(DCIProblem):
         """
         kl = self.result["kl"].values[0]
         e_r = self.result["e_r"].values[0]
-        title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + \
-                f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
+        title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
         title = super()._parse_title()
         if lam_true is not None:
             l2_err = np.linalg.norm(lam_true - self.mud_point)
-            title = "$||\lambda^{{\dagger}} - \lambda^{{MUD}}||_{{\ell_2}}$" + \
-                    f" = {l2_err:.3f},  " + title
+            title = (
+                "$||\lambda^{{\dagger}} - \lambda^{{MUD}}||_{{\ell_2}}$"
+                + f" = {l2_err:.3f},  "
+                + title
+            )
 
         return title
 
@@ -980,19 +961,13 @@ class PCAMUDProblem(MUDProblem):
         pi_in=None,
         weights=None,
     ):
-        self.init_prob(samples, data, std_dev,
-                       pi_in=pi_in, weights=weights)
+        self.init_prob(samples, data, std_dev, pi_in=pi_in, weights=weights)
 
     @property
     def n_qoi(self):
         return self.qoi.shape[1]
 
-    def init_prob(self,
-                  samples,
-                  data,
-                  std_dev,
-                  pi_in=None,
-                  weights=None):
+    def init_prob(self, samples, data, std_dev, pi_in=None, weights=None):
         """
         Initialize problem
 
@@ -1003,11 +978,12 @@ class PCAMUDProblem(MUDProblem):
         beliefs on the `lam` sample sets.
         """
         # Assume gaussian error around mean of data with assumed noise
-        super().init_prob(samples, data, std_dev,
-                          pi_in=pi_in, pi_pr=None, weights=weights)
+        super().init_prob(
+            samples, data, std_dev, pi_in=pi_in, pi_pr=None, weights=weights
+        )
         self.qoi = self.q_lam
         self.pca_states = None
-        self.pca_result =None
+        self.pca_result = None
 
     def q_pca(self, mask=None, max_nc=None):
         """
@@ -1016,8 +992,7 @@ class PCAMUDProblem(MUDProblem):
         Aggregate q_lam data with observed data for MUD convergence.
         """
         mask = np.arange(self.n_qoi) if mask is None else mask
-        residuals = np.subtract(self.data[mask].T,
-                                self.qoi[:, mask]) / self.std_dev
+        residuals = np.subtract(self.data[mask].T, self.qoi[:, mask]) / self.std_dev
         if max_nc is None:
             max_nc = self.n_params if self.n_params < len(mask) else len(mask)
 
@@ -1036,11 +1011,11 @@ class PCAMUDProblem(MUDProblem):
         self.state = put_df(self.state, "q_pca", self.q_lam, size=max_nc)
 
     def solve(
-            self,
-            pca_mask: List[int] = None,
-            max_nc: int = None,
-            exp_thresh: float = 0.5,
-            best_method: str = "closest",
+        self,
+        pca_mask: List[int] = None,
+        max_nc: int = None,
+        exp_thresh: float = 0.5,
+        best_method: str = "closest",
     ):
         """
         Solve the parameter estimation problem
@@ -1089,13 +1064,13 @@ class PCAMUDProblem(MUDProblem):
         results_cols = (
             ["nc"] + [f"lam_MUD_{i}" for i in range(self.n_params)] + ["e_r", "kl"]
         )
-        results = np.zeros((len(self.pca['vecs']), self.n_params + 3))
+        results = np.zeros((len(self.pca["vecs"]), self.n_params + 3))
         results = []
         dists = []
-        nc_list = range(1, len(self.pca['vecs']) + 1)
+        nc_list = range(1, len(self.pca["vecs"]) + 1)
         pca_states = []
         for nc in nc_list:
-            logger.info(f'Solving using {nc} components')
+            logger.info(f"Solving using {nc} components")
             self.q_lam = all_qoi[:, 0:nc]
             self.dists["pi_obs"] = dist.norm(loc=nc * [0], scale=1)
             self.dists["pi_pr"] = None
@@ -1107,15 +1082,17 @@ class PCAMUDProblem(MUDProblem):
                     continue
                 else:
                     raise v
-            self.result['nc'] = nc
-            results.append(self.result.set_index('nc'))
+            self.result["nc"] = nc
+            results.append(self.result.set_index("nc"))
             pca_states.append(
-                    self.state[['pi_obs', 'pi_pr',
-                               'ratio', 'pi_up']].add_suffix(f'_nc={nc}').copy())
+                self.state[["pi_obs", "pi_pr", "ratio", "pi_up"]]
+                .add_suffix(f"_nc={nc}")
+                .copy()
+            )
             dists.append(self.dists)
 
         # Parse DataFrame with results of mud estimations for each ts choice
-        res_df = pd.concat(results) # , keys=nc_list, names=['nc'])
+        res_df = pd.concat(results)  # , keys=nc_list, names=['nc'])
         res_df["predict_delta"] = np.abs(res_df["e_r"] - 1.0)
         res_df["within_thresh"] = res_df["predict_delta"] <= self.exp_thresh
         res_df["closest"] = np.logical_and(
@@ -1187,11 +1164,11 @@ class PCAMUDProblem(MUDProblem):
             df = self.state
             if nc is not None:
                 if nc > len(self.pca_result):
-                    msg = f'{nc} greater than max number of components used'
+                    msg = f"{nc} greater than max number of components used"
                     logger.error(msg)
                     raise ValueError(msg)
                 df = self.state.join(self.pca_states)
-                ratio_col = f'ratio_nc={nc}'
+                ratio_col = f"ratio_nc={nc}"
         ax, labels = super().plot_L(
             lam_true=lam_true,
             plot_mud=plot_mud,
@@ -1252,11 +1229,11 @@ class PCAMUDProblem(MUDProblem):
             df = self.state
             if nc is not None:
                 if nc > len(self.pca_result):
-                    msg = f'{nc} greater than max number of components used'
+                    msg = f"{nc} greater than max number of components used"
                     logger.error(msg)
                     raise ValueError(msg)
                 df = self.state.join(self.pca_states)
-                ratio_col = f'ratio_nc={nc}'
+                ratio_col = f"ratio_nc={nc}"
         ax, labels = super().plot_D(
             df=df,
             state_idx=state_idx,
@@ -1286,41 +1263,53 @@ class PCAMUDProblem(MUDProblem):
         fig, axs = plt.subplots(1, 2, figsize=(14, 6))
         lam_kwargs = {} if lam_kwargs is None else lam_kwargs
         q_lam_kwargs = {} if q_lam_kwargs is None else q_lam_kwargs
-        lam_kwargs['ax'] = axs[0]
-        lam_kwargs['nc'] = nc
-        q_lam_kwargs['ax'] = axs[1]
-        q_lam_kwargs['nc'] = nc
+        lam_kwargs["ax"] = axs[0]
+        lam_kwargs["nc"] = nc
+        q_lam_kwargs["ax"] = axs[1]
+        q_lam_kwargs["nc"] = nc
         self.plot_L(**lam_kwargs)
         self.plot_D(**q_lam_kwargs)
-        lam_true = lam_kwargs.get('lam_true', None)
+        lam_true = lam_kwargs.get("lam_true", None)
         fig.suptitle(self._parse_title(lam_true=lam_true))
         fig.tight_layout()
 
         return axs
 
     def param_density_plots(
-            self,
-            nc=None,
-            lam_true=None,
-            base_size=4,
-            max_np=9,
+        self,
+        nc=None,
+        lam_true=None,
+        base_size=4,
+        max_np=9,
     ):
 
         base_size = 4
         n_params = self.n_params if self.n_params <= max_np else max_np
         grid_plot = self._closest_factors(n_params)
-        fig, ax = plt.subplots(grid_plot[0], grid_plot[1],
-                               figsize=(grid_plot[0]*(base_size + 2),
-                                        grid_plot[0]*base_size))
+        fig, ax = plt.subplots(
+            grid_plot[0],
+            grid_plot[1],
+            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
+        )
 
-        lam_true = set_shape(lam_true, (1, -1)) if lam_true \
-                is not None else lam_true
+        lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
         for i, ax in enumerate(ax.flat):
             self.plot_L(nc=nc, param_idx=i, lam_true=lam_true, ax=ax)
 
         fig.suptitle(self._parse_title(nc=nc, lam_true=lam_true))
         fig.tight_layout()
 
+    def learned_qoi_plot(self, nc_mask=None):
+        """
+        Scatter plots of learned `q_pca` components.
+        """
+        max_nc = len(self.pca["vecs"])
+        nc_mask = np.arange(max_nc) if nc_mask is None else nc_mask
+        max_nc = self.n_states if self.n_states <= max_nc else max_nc
+        g = sns.PairGrid(self.state[[f"q_pca_{i}" for i in nc_mask]], diag_sharey=False)
+        g.map_upper(sns.scatterplot)
+        g.map_lower(sns.kdeplot)
+        g.map_diag(sns.kdeplot)
 
     def _parse_title(
         self,
@@ -1333,27 +1322,33 @@ class PCAMUDProblem(MUDProblem):
         if nc is None:
             kl = self.result["kl"].values[0]
             e_r = self.result["e_r"].values[0]
-            title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + \
-                    f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
+            title = (
+                f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
+            )
             if lam_true is not None:
                 l2_err = np.linalg.norm(lam_true - self.mud_point)
-                title = "$||\lambda^{{\dagger}} - \lambda^{{MUD}}||_{{\ell_2}}$" + \
-                        f" = {l2_err:.3f},  " + title
+                title = (
+                    "$||\lambda^{{\dagger}} - \lambda^{{MUD}}||_{{\ell_2}}$"
+                    + f" = {l2_err:.3f},  "
+                    + title
+                )
             best_nc = self.result[self.best_method].idxmax()
             title = f"nc = {best_nc}, " + title
         else:
             kl = self.pca_result["kl"].values[nc]
             e_r = self.pca_result["e_r"].values[nc]
-            title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + \
-                    f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
+            title = (
+                f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
+            )
             if lam_true is not None:
-                mud_point = get_df(self.pca_result,
-                                   'lam_MUD', size=self.n_params)
+                mud_point = get_df(self.pca_result, "lam_MUD", size=self.n_params)
                 l2_err = np.linalg.norm(lam_true - self.mud_point[[nc]])
-                title = "$||\lambda^{{\dagger}} - \lambda^{{MUD}}||_{{\ell_2}}$" + \
-                        f" = {l2_err:.3f},  " + title
+                title = (
+                    "$||\lambda^{{\dagger}} - \lambda^{{MUD}}||_{{\ell_2}}$"
+                    + f" = {l2_err:.3f},  "
+                    + title
+                )
             title = f"nc = {nc}: " + title
-
 
         return title
 
@@ -1383,23 +1378,17 @@ class SequentialProblem(PCAMUDProblem):
         pi_in=None,
         weights=None,
     ):
-        self.init_prob(samples, data, std_dev,
-                       pi_in=pi_in, weights=weights)
+        self.init_prob(samples, data, std_dev, pi_in=pi_in, weights=weights)
 
     @property
     def it(self):
-        return len(self.states['results'])
+        return len(self.states["results"])
 
     @property
     def num_it(self):
-        return len(self.states['data'])
+        return len(self.states["data"])
 
-    def init_prob(self,
-                  samples,
-                  data,
-                  std_dev,
-                  pi_in=None,
-                  weights=None):
+    def init_prob(self, samples, data, std_dev, pi_in=None, weights=None):
         """
         Initialize problem
 
@@ -1410,22 +1399,21 @@ class SequentialProblem(PCAMUDProblem):
         beliefs on the `lam` sample sets.
         """
         # Assume gaussian error around mean of data with assumed noise
-        super().init_prob(samples, data, std_dev,
-                          pi_in=pi_in, weights=weights)
+        super().init_prob(samples, data, std_dev, pi_in=pi_in, weights=weights)
         self.states = {
-                "qoi": np.array_split(self.qoi, 1, axis=1),
-                "data": np.array_split(self.data, 1, axis=0),
-                "results": [],
-                "states": [],
+            "qoi": np.array_split(self.qoi, 1, axis=1),
+            "data": np.array_split(self.data, 1, axis=0),
+            "results": [],
+            "states": [],
         }
 
     def _create_binary_string(self, lst, max_int):
-        binary_string = ''
+        binary_string = ""
         for i in range(max_int):
             if i in lst:
-                binary_string += '1'
+                binary_string += "1"
             else:
-                binary_string += '0'
+                binary_string += "0"
         return binary_string
 
     def _get_qoi_combinations(
@@ -1439,8 +1427,7 @@ class SequentialProblem(PCAMUDProblem):
         if self.qoi_method == "all":
             combs = [list(np.arange(self.n_qoi))]
         elif self.qoi_method == "linear":
-            combs = [list(np.arange(0, i)) for i in range(min_num,
-                                                          self.n_qoi)]
+            combs = [list(np.arange(0, i)) for i in range(min_num, self.n_qoi)]
         elif self.qoi_method == "random":
             # Divide the max#tries amongs the number of timesteps available
             if self.n_qoi < max_tries:
@@ -1456,8 +1443,7 @@ class SequentialProblem(PCAMUDProblem):
             qoi_choices = range(0, self.n_qoi)
             for num_ts in num_ts_list:
                 psble = list(
-                    [list(x) for x in
-                     itertools.combinations(qoi_choices, num_ts)]
+                    [list(x) for x in itertools.combinations(qoi_choices, num_ts)]
                 )
                 tries_per = tries_per if tries_per < len(psble) else len(psble)
                 combs += random.sample(psble, tries_per)
@@ -1467,10 +1453,10 @@ class SequentialProblem(PCAMUDProblem):
     def solve(
         self,
         num_splits: int = 1,
-        qoi_method: str = 'all',
+        qoi_method: str = "all",
         min_weight_thresh: float = 1e-4,
         exp_thresh: float = 0.5,
-        best_method: str= 'closest',
+        best_method: str = "closest",
         max_nc: int = None,
     ):
         """
@@ -1484,46 +1470,48 @@ class SequentialProblem(PCAMUDProblem):
             logger.error(msg)
             raise ValueError(msg)
 
-        self.states['qoi'] = np.array_split(self.qoi, num_splits, axis=1)
-        self.states['data'] = np.array_split(self.data, num_splits, axis=0)
-        pi_in = self.dists['pi_in']
-        weights = self.state['weight']
+        self.states["qoi"] = np.array_split(self.qoi, num_splits, axis=1)
+        self.states["data"] = np.array_split(self.data, num_splits, axis=0)
+        pi_in = self.dists["pi_in"]
+        weights = self.state["weight"]
         it_results = []
         it_states = []
         best_it_results = []
-        logger.info(f'Starting sequential algorithm with {num_splits}')
+        logger.info(f"Starting sequential algorithm with {num_splits}")
         for it in range(self.num_it):
-            logger.info(f'Re-initializing problem with split #{it}')
+            logger.info(f"Re-initializing problem with split #{it}")
             # Use parent method here, don't want to erase states dictionary
-            super().init_prob((self.lam, self.states['qoi'][it]),
-                              self.states['data'][it],
-                              self.std_dev,
-                              pi_in=pi_in,
-                              weights=weights)
+            super().init_prob(
+                (self.lam, self.states["qoi"][it]),
+                self.states["data"][it],
+                self.std_dev,
+                pi_in=pi_in,
+                weights=weights,
+            )
             qoi_combs = self._get_qoi_combinations()
 
             results = []
             qc_strs = []
             pca_states = []
-            logger.info(f'{qoi_method}: Trying {len(qoi_combs)} qoi combs.')
+            logger.info(f"{qoi_method}: Trying {len(qoi_combs)} qoi combs.")
             for q_idx, qc in enumerate(qoi_combs):
                 qc_strs.append(self._create_binary_string(qc, self.n_qoi))
-                logger.info(f'Trying comb of size {len(qc)}: {qc_strs[-1]}')
-                super().solve(pca_mask=qc,
-                              max_nc=max_nc,
-                              exp_thresh=exp_thresh,
-                              best_method=best_method,
-                              )
+                logger.info(f"Trying comb of size {len(qc)}: {qc_strs[-1]}")
+                super().solve(
+                    pca_mask=qc,
+                    max_nc=max_nc,
+                    exp_thresh=exp_thresh,
+                    best_method=best_method,
+                )
                 res_df = self.pca_result
-                res_df['qoi_comb'] = q_idx
+                res_df["qoi_comb"] = q_idx
 
                 # actions = []
                 # for nc, res in res_df.groupby("nc"):
                 #     actions.append(self._get_action(res))
                 # res_df["action"] = actions
-                results.append(res_df.set_index('qoi_comb', append=True))
-                pca_states.append(
-                        self.pca_states.add_suffix(f'_qoi={q_idx}').copy())
+                results.append(res_df.set_index("qoi_comb", append=True))
+                pca_states.append(self.pca_states.add_suffix(f"_qoi={q_idx}").copy())
 
             pca_states = pd.concat(pca_states, axis=1)
             res_df = pd.concat(results)
@@ -1542,28 +1530,29 @@ class SequentialProblem(PCAMUDProblem):
             )
             # TODO: replace this extra call with just setting appropriately
             # to what's saved in history to not reproduce work.
-            idx_max= res_df[self.best_method].idxmax()
-            super().solve(pca_mask=qoi_combs[idx_max[1]],
-                          max_nc=max_nc,
-                          exp_thresh=self.exp_thresh,
-                          best_method=self.best_method,
-                          )
+            idx_max = res_df[self.best_method].idxmax()
+            super().solve(
+                pca_mask=qoi_combs[idx_max[1]],
+                max_nc=max_nc,
+                exp_thresh=self.exp_thresh,
+                best_method=self.best_method,
+            )
             it_results.append(res_df.copy())
-            it_states.append(pca_states.add_suffix(f'_split={it}').copy())
+            it_states.append(pca_states.add_suffix(f"_split={it}").copy())
             best_it_results.append(res_df.loc[[idx_max]].copy())
 
             if it + 1 < self.num_it:
                 # TODO: Implement weight inflation if weights < min thresh?
                 logger.info("Update: setting pi_up -> pi_in, ratio -> weights")
-                pi_in = self.dists['pi_up']
-                weights = self.state['ratio']
+                pi_in = self.dists["pi_up"]
+                weights = self.state["ratio"]
 
-        best_it_result = pd.concat(best_it_results,
-                                keys=np.arange(self.num_it),
-                                names=['split'])
-        self.split_results = pd.concat(it_results,
-                                       keys=np.arange(self.num_it),
-                                       names=['split'])
+        best_it_result = pd.concat(
+            best_it_results, keys=np.arange(self.num_it), names=["split"]
+        )
+        self.split_results = pd.concat(
+            it_results, keys=np.arange(self.num_it), names=["split"]
+        )
         self.split_states = pd.concat(it_states, axis=1)
         self.result = best_it_result.iloc[[num_splits - 1]]
 
@@ -1623,12 +1612,14 @@ class SequentialProblem(PCAMUDProblem):
         """
         kl = self.result["kl"].values[0]
         e_r = self.result["e_r"].values[0]
-        title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + \
-                f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
+        title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
         if lam_true is not None:
             l2_err = np.linalg.norm(lam_true - self.mud_point)
-            title = "$||\lambda^{{\dagger}} - \lambda^{{MUD}}||_{{\ell_2}}$" + \
-                    f" = {l2_err:.3f},  " + title
+            title = (
+                "$||\lambda^{{\dagger}} - \lambda^{{MUD}}||_{{\ell_2}}$"
+                + f" = {l2_err:.3f},  "
+                + title
+            )
         best_nc = self.result[self.best_method].idxmax()
         title = f"nc = {best_nc[1]}, " + title
         title = f"Iteration {best_nc[0]}: " + title
@@ -1705,19 +1696,19 @@ class DynamicSequentialProblem(SequentialProblem):
         return action
 
     def solve(
-            self,
-            time_windows,
-            diff=0.5,
-            num_samples=1000,
-            seed=None,
-            max_nc: int = None,
-            splits_per: int = 1,
-            qoi_method: str = "all",
-            e_r_delta: float = 0.5,
-            kl_thresh: float = 3.0,
-            min_weight_thresh: float = 1e-4,
-            exp_thresh: float = 0.5,
-            best_method: str= 'closest',
+        self,
+        time_windows,
+        diff=0.5,
+        num_samples=1000,
+        seed=None,
+        max_nc: int = None,
+        splits_per: int = 1,
+        qoi_method: str = "all",
+        e_r_delta: float = 0.5,
+        kl_thresh: float = 3.0,
+        min_weight_thresh: float = 1e-4,
+        exp_thresh: float = 0.5,
+        best_method: str = "closest",
     ):
         """
         Iterative Solver
@@ -1741,14 +1732,14 @@ class DynamicSequentialProblem(SequentialProblem):
         if self.kl_thresh < 3.0:
             bad += [f"Shift detection D_KL_thresh(r) must be >= 3.0: {kl}"]
         if len(bad) > 0:
-            msg = 'Bad args:\n' + '\n'.join(bad)
+            msg = "Bad args:\n" + "\n".join(bad)
             logger.error(msg)
             raise ValueError(msg)
 
         self.diff = diff
         if self.samples is not None:
-            yn = input('Previous run exists. Do you want to reset state? y/(n)')
-            if yn == 'n':
+            yn = input("Previous run exists. Do you want to reset state? y/(n)")
+            if yn == "n":
                 return
             self.push_forwards = []
             self.states = []
@@ -1765,14 +1756,12 @@ class DynamicSequentialProblem(SequentialProblem):
         logger.info(f"Starting solve over time : {time_windows}")
         for it, tf in enumerate(time_windows[1:]):
             t0 = time_windows[it]
-            logger.info(
-                f"Iteration {it} [{t0}, {tf}]: "
-            )
+            logger.info(f"Iteration {it} [{t0}, {tf}]: ")
             args = self.forward_solve(tf, samples=self.samples)
             mud_args = self.get_mud_args()
             self.mud_prob.init_prob(
-                    *[mud_args[x] for x in
-                      ['lam', 'q_lam', 'data', 'std_dev']])
+                *[mud_args[x] for x in ["lam", "q_lam", "data", "std_dev"]]
+            )
             super().solve(
                 num_splits=num_splits,
                 qoi_method=qoi_method,
@@ -1782,32 +1771,31 @@ class DynamicSequentialProblem(SequentialProblem):
                 max_nc=max_nc,
             )
             self.iteration_update()
-            logger.info(
-                f" Summary:\n{log_table(self.get_summary_row())}"
-            )
+            logger.info(f" Summary:\n{log_table(self.get_summary_row())}")
 
     def iteration_update(
-            self,
+        self,
     ):
         """
         Perform an update after a Sequential MUD estimation
         """
-        action = self.mud_prob.result['action'].values[0]
-        if action == 'UPDATE':
-            logger.info('Drawing from updated distribution')
+        action = self.mud_prob.result["action"].values[0]
+        if action == "UPDATE":
+            logger.info("Drawing from updated distribution")
             self.samples = self.mud_prob.sample_update(self.n_samples)
             self.sample_weights = None
-        elif action == 'RESET':
-            logger.info('Reseting to initial distribution')
+        elif action == "RESET":
+            logger.info("Reseting to initial distribution")
             self.samples = self.get_uniform_initial_samples(
                 scale=self.diff, num_samples=self.n_samples
             )
-        elif action == 'RE-WEIGHT':
-            logger.info('Re-weighting current samples')
-            self.sample_weights = self.mud_prob.state['weight'] * \
-                self.mud_prob.state['ratio']
+        elif action == "RE-WEIGHT":
+            logger.info("Re-weighting current samples")
+            self.sample_weights = (
+                self.mud_prob.state["weight"] * self.mud_prob.state["ratio"]
+            )
         else:
-            logger.info('No action taken, continuing with current samples')
+            logger.info("No action taken, continuing with current samples")
 
     def get_summary_row(
         self,
