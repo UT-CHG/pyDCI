@@ -1,68 +1,53 @@
-"""
-Simple Example
-"""
+import importlib
+
+from pydci import Model
+
+importlib.reload(Model)
+import pdb
+
+import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import distributions as ds  # type: ignore
-from scipy.stats import norm, uniform  # type: ignore
 
 
-def monomial_1D(
-    p: int = 5,
-    n_samples: int = int(1e3),
-    mean: float = 0.25,
-    std_dev: float = 0.1,
-    N: int = 1,
-):
-    """
-    1D Monomial Map over [-1, 1].
+class Monomial2D(Model.DynamicModel):
+    def __init__(
+        self,
+        p,
+        x0=[0, 0],  # Note in the constant monomial case, initial state won't matter
+        lam_true=[0.3, 0.8],
+        solve_ts=1.0,
+        sample_ts=1.1,
+        measurement_noise=0.05,
+        **kwargs,
+    ):
+        self.p = p
+        super().__init__(
+            x0,
+            lam_true,
+            solve_ts=solve_ts,
+            sample_ts=sample_ts,
+            measurement_noise=measurement_noise,
+            **kwargs,
+        )
 
-    Parameters
-    ----------
-    p: int, default=5
-        Power of monomial.
-    n_samples : int, default=1000
-        Number of samples to draw from uniform initial over domain.
-    mu: float, default=0.25
-        True mean value of observed data.
-    sigma: float, default=0.1
-        Standard deviation of observed data.
-    N: int, default=1
-        Number of data points to generate from observed distribution. Note if 1,
-        the default value, then the singular drawn value will always be ``mu``.
+    def forward_model(
+        self,
+        x0,
+        times,
+        lam,
+    ):
+        """
+        Monomial Forward Model
 
-    Returns
-    -------
-    data: Tuple[:class:`numpy.ndarray`,]
-        Tuple of ``(lam, q_lam, data)`` where ``lam`` is contains the
-        :math:`\lambda` samples, ``q_lam`` the value of :math:`Q_p(\lambda)`,
-        and ``data`` the observed data values from the
-        :math:`\mathcal{N}(\mu, \sigma)` distribution.
+        Static in time (tim array ignored)
+        """
+        res = np.repeat(np.array([[lam[0] ** self.p, lam[1] ** self.p]]), 1, axis=1)
+        return res
 
-    Examples
-    --------
-    Note when N=1, data point drawn is always equal to mean.
-
-    >>> import numpy as np
-    >>> from pydcia.examples.monomial import monomial_1D
-    >>> lam, q_lam, data, std_dev = polynomial_1D_data(num_samples=10, N=1)
-    >>> data[0]
-    0.25
-    >>> len(lam)
-    10
-
-    For higher values of N, values are drawn from N(mean, std_dev) distribution.
-
-    >>> lam, q_lam, data = polynomial_1D_data(N=10, mean=0.5, std_dev=0.01)
-    >>> len(data)
-    10
-    >>> np.mean(data) < 0.6
-    True
-    """
-    if N == 1:
-        data = np.array([mean])
-    else:
-        data = norm.rvs(loc=mean, scale=std_dev**2, size=N)
-    lam = uniform.rvs(size=(n_samples, 1), loc=-1, scale=2)
-    q_lam = (lam**p).reshape(n_samples, -1)
-    pi_obs = norm(data, scale=std_dev)
-    return lam, q_lam, data, std_dev
+    def plot_states(
+        self,
+    ):
+        fig, ax = plt.subplots(2, 1, figsize=(12, 8))
+        for i, ax in enumerate(ax):
+            self.plot_state(state_idx=i, ax=ax)
+            ax.set_title(f"{i}: Temporal Evolution")

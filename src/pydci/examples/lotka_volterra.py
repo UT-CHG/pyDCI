@@ -1,11 +1,11 @@
 """
 Lotka-Volterra (Predator-Prey) System
 """
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy.integrate import odeint
 
 from pydci.Model import DynamicModel
-
 
 # Baseline
 LV_P1 = [
@@ -96,6 +96,16 @@ class LotkaVolteraModel(DynamicModel):
             The instance of the class
         """
         return odeint(lotka_volterra_system, x0, times, args=parameter_samples)
+
+    def plot_states(self):
+        """
+        Plot states over time
+        """
+        fig, ax = plt.subplots(2, 1, figsize=(12, 8))
+        title = ["Predator", "Prey"]
+        for i, ax in enumerate(ax.flat):
+            self.plot_state(state_idx=i, ax=ax)
+            ax.set_title(f"{i}: {title[i]} Temporal Evolution")
 
 
 # TODO: Workout seeds -> Put ones to save in dictionaries

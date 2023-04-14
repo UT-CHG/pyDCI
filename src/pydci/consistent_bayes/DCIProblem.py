@@ -24,27 +24,35 @@ and Bayes’ Rule to Construct Consistent Solutions to Stochastic Inverse
 Problems,” SIAM J. Sci. Comput., vol. 40, no. 2, pp. A984–A1011, Jan. 2018,
 doi: 10.1137/16M1087229.
 
+TODO List:
+
+    - Mud point for inherited classes not being plotted correctly
+    - Sequential (should be renamed split sequential?) - Plot distribution
+    methods for plotting distributions per iteration, qoi combinations,
+    or pca values
+    Dynamic Problem -> Finish
+
 """
+import itertools
 import pdb
+import random
 from typing import Callable, List, Optional, Union
 
 import matplotlib.pyplot as plt
-import itertools
-import random
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from numpy.typing import ArrayLike
 from rich.table import Table
-from scipy.stats.distributions import norm
 from scipy.stats import distributions as dist  # type: ignore
 from scipy.stats import rv_continuous  # type: ignore
 from scipy.stats import entropy
 from scipy.stats import gaussian_kde as gkde  # type: ignore
+from scipy.stats.distributions import norm
 from sklearn.decomposition import PCA  # type: ignore
 from sklearn.preprocessing import StandardScaler  # type: ignore
 
-from pydci.log import disable_log, enable_log, logger, log_table
+from pydci.log import disable_log, enable_log, log_table, logger
 from pydci.utils import fit_domain, get_df, put_df, set_shape
 
 sns.color_palette("bright")
@@ -273,10 +281,15 @@ class DCIProblem(object):
             (num_samples * num_params)
         """
         if isinstance(self.dists[dist], gkde):
-            return self.self.dists[dist].resample(size=num_samples).T
+            return self.dists[dist].resample(size=num_samples).T
         else:
-            dim = self.n_params if dist == "pi_in" else self.n_states
-            return self.self.dists[dist].rvs((num_samples, dim)).T
+            dim = self.n_params if dist in ["pi_in", "pi_up"] else self.n_states
+            if self.dists[dist] is None:
+                _ = getattr(self, dist, None)()
+            if not isinstance(self.dists[dist], gkde):
+                return self.dists[dist].rvs((num_samples, dim)).T
+            else:
+                return self.dists[dist].resample(num_samples).T
 
     def set_weights(self, weights: ArrayLike = None):
         """
@@ -374,6 +387,7 @@ class DCIProblem(object):
         param_idx=0,
         param_col="lam",
         ratio_col="ratio",
+        weight_col="weight",
         plot_initial=True,
         plot_legend=True,
         ax=None,
@@ -432,7 +446,7 @@ class DCIProblem(object):
             fill=True,
             color=bright_colors[param_idx],
             label=pi_up_label,
-            weights=df["weight"] * df[ratio_col],
+            weights=df[weight_col] * df[ratio_col],
         )
         labels.append(pi_up_label)
         if plot_initial:
@@ -445,7 +459,7 @@ class DCIProblem(object):
                 color=bright_colors[param_idx],
                 linestyle=":",
                 label=pi_in_label,
-                weights="weight",
+                weights=weight_col,
             )
             labels.append(pi_in_label)
 
@@ -652,7 +666,6 @@ class DCIProblem(object):
         base_size=4,
         max_np=9,
     ):
-
         base_size = 4
         n_params = self.n_params if self.n_params <= max_np else max_np
         grid_plot = self._closest_factors(n_params)
@@ -671,12 +684,14 @@ class DCIProblem(object):
 
     def _parse_title(
         self,
+        result=None,
     ):
         """
         Parse title for plots
         """
-        kl = self.result["kl"].values[0]
-        e_r = self.result["e_r"].values[0]
+        result = self.result if result is None else result
+        kl = result["kl"].values[0]
+        e_r = result["e_r"].values[0]
         title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
 
         return title
@@ -795,11 +810,12 @@ class MUDProblem(DCIProblem):
     def plot_L(
         self,
         lam_true=None,
-        plot_mud=True,
+        mud_point=None,
         df=None,
         param_idx=0,
         param_col="lam",
         ratio_col="ratio",
+        weight_col="weight",
         plot_initial=True,
         plot_legend=True,
         ax=None,
@@ -837,6 +853,7 @@ class MUDProblem(DCIProblem):
             param_idx=param_idx,
             param_col=param_col,
             ratio_col=ratio_col,
+            weight_col=weight_col,
             plot_initial=plot_initial,
             plot_legend=plot_legend,
             ax=ax,
@@ -857,18 +874,16 @@ class MUDProblem(DCIProblem):
             )
             labels.append(lam_true_label)
 
-        if plot_mud is not None:
-            mud_label = (
-                f"$\lambda^{{MUD}}_{param_idx} = " + f"{self.mud_point[param_idx]:.4f}$"
-            )
-            ax.axvline(
-                x=self.mud_point[param_idx],
-                linewidth=3,
-                color="green",
-                linestyle="--",
-                label=mud_label,
-            )
-            labels.append(mud_label)
+        mud_point = self.mud_point if mud_point is None else mud_point
+        mud_label = f"$\lambda^{{MUD}}_{param_idx} = " + f"{mud_point[param_idx]:.4f}$"
+        ax.axvline(
+            x=mud_point[param_idx],
+            linewidth=3,
+            color="green",
+            linestyle="--",
+            label=mud_label,
+        )
+        labels.append(mud_label)
 
         if plot_legend:
             ax.legend(
@@ -904,16 +919,20 @@ class MUDProblem(DCIProblem):
 
     def _parse_title(
         self,
+        result=None,
         lam_true=None,
     ):
         """
         Parse title for plots
+
+        Extends DCIProblem _parse title by adding MUD point.
+        Note sets result to parse title for to result set by class if none
+        passed by call (for calls from sub-classes).
         """
-        kl = self.result["kl"].values[0]
-        e_r = self.result["e_r"].values[0]
-        title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
-        title = super()._parse_title()
+        result = self.result if result is None else result
+        title = super()._parse_title(result=result)
         if lam_true is not None:
+            mud_point = get_df(result, "lam_MUD", size=self.n_params)[0]
             l2_err = np.linalg.norm(lam_true - self.mud_point)
             title = (
                 "$||\lambda^{{\dagger}} - \lambda^{{MUD}}||_{{\ell_2}}$"
@@ -983,7 +1002,7 @@ class PCAMUDProblem(MUDProblem):
         )
         self.qoi = self.q_lam
         self.pca_states = None
-        self.pca_result = None
+        self.pca_results = None
 
     def q_pca(self, mask=None, max_nc=None):
         """
@@ -1084,10 +1103,12 @@ class PCAMUDProblem(MUDProblem):
                     raise v
             self.result["nc"] = nc
             results.append(self.result.set_index("nc"))
+            pca_state = self.state[
+                ["weight", "pi_obs", "pi_pr", "ratio", "pi_up"]
+            ].copy()
+            pca_state["nc"] = nc
             pca_states.append(
-                self.state[["pi_obs", "pi_pr", "ratio", "pi_up"]]
-                .add_suffix(f"_nc={nc}")
-                .copy()
+                pca_state[["nc", "weight", "pi_obs", "pi_pr", "ratio", "pi_up"]]
             )
             dists.append(self.dists)
 
@@ -1114,19 +1135,20 @@ class PCAMUDProblem(MUDProblem):
         self.dists["pi_pr"] = None
         super().solve()
         # self.state = self.state.join(pca_states)
-        self.pca_states = pd.concat(pca_states, axis=1)
-        self.pca_result = res_df
+        self.pca_states = pd.concat(pca_states, axis=0)
+        self.pca_results = res_df
         self.result = res_df.loc[[best_nc]]
 
     def plot_L(
         self,
         nc=None,
         lam_true=None,
-        plot_mud=True,
+        mud_point=None,
         df=None,
         param_idx=0,
         param_col="lam",
         ratio_col="ratio",
+        weight_col="weight",
         plot_initial=True,
         plot_legend=True,
         ax=None,
@@ -1161,21 +1183,24 @@ class PCAMUDProblem(MUDProblem):
             plotted and (2) List of labels that were plotted, in order plotted.
         """
         if df is None:
-            df = self.state
-            if nc is not None:
-                if nc > len(self.pca_result):
-                    msg = f"{nc} greater than max number of components used"
-                    logger.error(msg)
-                    raise ValueError(msg)
-                df = self.state.join(self.pca_states)
-                ratio_col = f"ratio_nc={nc}"
+            df_index = self.result.index.values[0]
+            nc = df_index if nc is None else nc
+            mud_point = get_df(self.pca_results.loc[[nc]], "lam_MUD", self.n_params)[0]
+            df = self.state.join(
+                self.pca_states[self.pca_states["nc"] == nc][["ratio"]].add_suffix(
+                    f"_plot"
+                )
+            )
+            ratio_col = "ratio_plot"
+
         ax, labels = super().plot_L(
             lam_true=lam_true,
-            plot_mud=plot_mud,
+            mud_point=mud_point,
             df=df,
             param_idx=param_idx,
             param_col=param_col,
             ratio_col=ratio_col,
+            weight_col=weight_col,
             plot_initial=plot_initial,
             plot_legend=plot_legend,
             ax=ax,
@@ -1228,11 +1253,15 @@ class PCAMUDProblem(MUDProblem):
         if df is None:
             df = self.state
             if nc is not None:
-                if nc > len(self.pca_result):
+                if nc > len(self.pca_results):
                     msg = f"{nc} greater than max number of components used"
                     logger.error(msg)
                     raise ValueError(msg)
-                df = self.state.join(self.pca_states)
+                df = self.state.join(
+                    self.pca_states[self.pca_states["nc"] == nc][["ratio"]].add_suffix(
+                        f"_nc={nc}"
+                    )
+                )
                 ratio_col = f"ratio_nc={nc}"
         ax, labels = super().plot_D(
             df=df,
@@ -1251,7 +1280,7 @@ class PCAMUDProblem(MUDProblem):
 
     def density_plots(
         self,
-        nc=None,
+        idx=None,
         lam_true=None,
         lam_kwargs=None,
         q_lam_kwargs=None,
@@ -1264,13 +1293,18 @@ class PCAMUDProblem(MUDProblem):
         lam_kwargs = {} if lam_kwargs is None else lam_kwargs
         q_lam_kwargs = {} if q_lam_kwargs is None else q_lam_kwargs
         lam_kwargs["ax"] = axs[0]
-        lam_kwargs["nc"] = nc
+        lam_kwargs["idx"] = nc
         q_lam_kwargs["ax"] = axs[1]
-        q_lam_kwargs["nc"] = nc
+        q_lam_kwargs["idx"] = idx
         self.plot_L(**lam_kwargs)
         self.plot_D(**q_lam_kwargs)
         lam_true = lam_kwargs.get("lam_true", None)
-        fig.suptitle(self._parse_title(lam_true=lam_true))
+        fig.suptitle(
+            self._parse_title(
+                result=self.result if nc is None else self.pca_results.loc[[nc]],
+                lam_true=lam_true,
+            )
+        )
         fig.tight_layout()
 
         return axs
@@ -1282,7 +1316,6 @@ class PCAMUDProblem(MUDProblem):
         base_size=4,
         max_np=9,
     ):
-
         base_size = 4
         n_params = self.n_params if self.n_params <= max_np else max_np
         grid_plot = self._closest_factors(n_params)
@@ -1295,8 +1328,44 @@ class PCAMUDProblem(MUDProblem):
         lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
         for i, ax in enumerate(ax.flat):
             self.plot_L(nc=nc, param_idx=i, lam_true=lam_true, ax=ax)
+            ax.set_title(f"$\lambda_{i}$")
 
-        fig.suptitle(self._parse_title(nc=nc, lam_true=lam_true))
+        fig.suptitle(
+            self._parse_title(
+                result=self.result if nc is None else self.pca_results.loc[[nc]],
+                nc=nc,
+                lam_true=lam_true,
+            )
+        )
+        fig.tight_layout()
+
+    def nc_param_density_plots(
+        self,
+        nc_mask=None,
+        param_idx=0,
+        lam_true=None,
+        base_size=4,
+        max_np=9,
+    ):
+        base_size = 4
+        if nc_mask is None:
+            nc_mask = np.arange(1, len(self.pca_results) + 1)
+        nc = len(nc_mask)
+        nc = nc if nc <= max_np else max_np
+        grid_plot = self._closest_factors(nc)
+        fig, ax = plt.subplots(
+            grid_plot[0],
+            grid_plot[1],
+            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
+        )
+
+        lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
+        for i, ax in enumerate(ax.flat):
+            self.plot_L(nc=nc_mask[i], param_idx=param_idx, lam_true=lam_true, ax=ax)
+            result = self.pca_results.loc[[nc_mask[i]]]
+            ax.set_title(self._parse_title(result=result, lam_true=lam_true, nc=True))
+
+        fig.suptitle("MUD Estimates by Number of PCA Components Used")
         fig.tight_layout()
 
     def learned_qoi_plot(self, nc_mask=None):
@@ -1313,42 +1382,17 @@ class PCAMUDProblem(MUDProblem):
 
     def _parse_title(
         self,
-        nc=None,
+        result=None,
+        nc=True,
         lam_true=None,
     ):
         """
         Parse title for plots
         """
-        if nc is None:
-            kl = self.result["kl"].values[0]
-            e_r = self.result["e_r"].values[0]
-            title = (
-                f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
-            )
-            if lam_true is not None:
-                l2_err = np.linalg.norm(lam_true - self.mud_point)
-                title = (
-                    "$||\lambda^{{\dagger}} - \lambda^{{MUD}}||_{{\ell_2}}$"
-                    + f" = {l2_err:.3f},  "
-                    + title
-                )
-            best_nc = self.result[self.best_method].idxmax()
-            title = f"nc = {best_nc}, " + title
-        else:
-            kl = self.pca_result["kl"].values[nc]
-            e_r = self.pca_result["e_r"].values[nc]
-            title = (
-                f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
-            )
-            if lam_true is not None:
-                mud_point = get_df(self.pca_result, "lam_MUD", size=self.n_params)
-                l2_err = np.linalg.norm(lam_true - self.mud_point[[nc]])
-                title = (
-                    "$||\lambda^{{\dagger}} - \lambda^{{MUD}}||_{{\ell_2}}$"
-                    + f" = {l2_err:.3f},  "
-                    + title
-                )
-            title = f"nc = {nc}: " + title
+        result = self.result if result is None else result
+        title = super()._parse_title(result=result, lam_true=lam_true)
+        if nc:
+            title = f"nc = {result.index[0]}: " + title
 
         return title
 
@@ -1503,7 +1547,7 @@ class SequentialProblem(PCAMUDProblem):
                     exp_thresh=exp_thresh,
                     best_method=best_method,
                 )
-                res_df = self.pca_result
+                res_df = self.pca_results
                 res_df["qoi_comb"] = q_idx
 
                 # actions = []
@@ -1511,9 +1555,10 @@ class SequentialProblem(PCAMUDProblem):
                 #     actions.append(self._get_action(res))
                 # res_df["action"] = actions
                 results.append(res_df.set_index("qoi_comb", append=True))
-                pca_states.append(self.pca_states.add_suffix(f"_qoi={q_idx}").copy())
+                temp = self.pca_states.copy()
+                temp["qoi_comb"] = q_idx
+                pca_states.append(temp)
 
-            pca_states = pd.concat(pca_states, axis=1)
             res_df = pd.concat(results)
             res_df["closest"] = np.logical_and(
                 res_df["predict_delta"]
@@ -1538,8 +1583,24 @@ class SequentialProblem(PCAMUDProblem):
                 best_method=self.best_method,
             )
             it_results.append(res_df.copy())
-            it_states.append(pca_states.add_suffix(f"_split={it}").copy())
             best_it_results.append(res_df.loc[[idx_max]].copy())
+
+            pca_states = pd.concat(pca_states, axis=0)
+            pca_states["split"] = it
+            it_states.append(
+                pca_states[
+                    [
+                        "split",
+                        "qoi_comb",
+                        "nc",
+                        "weight",
+                        "pi_obs",
+                        "pi_pr",
+                        "ratio",
+                        "pi_up",
+                    ]
+                ]
+            )
 
             if it + 1 < self.num_it:
                 # TODO: Implement weight inflation if weights < min thresh?
@@ -1553,7 +1614,7 @@ class SequentialProblem(PCAMUDProblem):
         self.split_results = pd.concat(
             it_results, keys=np.arange(self.num_it), names=["split"]
         )
-        self.split_states = pd.concat(it_states, axis=1)
+        self.split_states = pd.concat(it_states, axis=0)
         self.result = best_it_result.iloc[[num_splits - 1]]
 
     def get_summary_table(
@@ -1584,6 +1645,107 @@ class SequentialProblem(PCAMUDProblem):
 
         return table
 
+    def plot_L(
+        self,
+        idx=None,
+        lam_true=None,
+        mud_point=None,
+        df=None,
+        param_idx=0,
+        param_col="lam",
+        ratio_col="ratio",
+        weight_col="ratio",
+        plot_initial=True,
+        plot_legend=True,
+        ax=None,
+        figsize=(6, 6),
+    ):
+        """
+        Plot Lambda Space Distributions
+
+        Plot distributions over parameter space. This includes the initial and
+        the updated distributions. Extends `MUDProblem` methods by allowing
+        an `nc` argument to plot the solutions that use only `nc` number of
+        principal components in the `q_pca` map. If `nc` is not specified, the
+        best choice of `nc` will be picked from those tried, with the best
+        being chosen according to the `best_method` set in `solve()`.
+
+        Parameters
+        ----------
+        param_idx : int, default=0
+            Index of parameter, `lam` to plot.
+        lam_true: ArrayLike, default=None
+            If specified, a vertical line for the true parameter solution will
+            be added. Note this value must be the same dimension as the
+            parameter space, even if it only the value at the `param_idx`
+            specified is only used.
+        plot_mud: bool, default=True
+            Whether to add a vertical line for the computed MUD point solution.
+
+        Returns
+        -------
+        ax, labels : Tuple
+            Tuple of (1) matplotlib axis object where distributions where
+            plotted and (2) List of labels that were plotted, in order plotted.
+        """
+        if df is None:
+            df = self.state
+            res = self._get_plot_df(idx, cols=["ratio", "weight"])
+            if res is not None:
+                df = res[0]
+                mud_point = res[1]
+                ratio_col = res[2][0]
+                weight_col = res[2][1]
+
+        ax, labels = super().plot_L(
+            lam_true=lam_true,
+            mud_point=mud_point,
+            df=df,
+            param_idx=param_idx,
+            param_col=param_col,
+            ratio_col=ratio_col,
+            weight_col=weight_col,
+            plot_initial=plot_initial,
+            plot_legend=plot_legend,
+            ax=ax,
+            figsize=figsize,
+        )
+
+        return ax, labels
+
+    def splits_param_density_plots(
+        self,
+        split_mask=None,
+        nc=None,
+        qoi_comb=None,
+        param_idx=0,
+        lam_true=None,
+        base_size=4,
+        max_splits=9,
+    ):
+        base_size = 4
+        if split_mask is None:
+            split_mask = np.arange(self.num_it)
+        ns = len(split_mask)
+        ns = ns if ns <= max_splits else max_splits
+        grid_plot = self._closest_factors(ns)
+        fig, ax = plt.subplots(
+            grid_plot[0],
+            grid_plot[1],
+            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
+        )
+
+        lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
+        for i, ax in enumerate(ax.flat):
+            result = self.split_results.loc[pd.IndexSlice[i, :, :], :]
+            best_result = result.iloc[[result[self.best_method].argmax()]]
+            best_idx = best_result.index.values[0]
+            self.plot_L(idx=best_idx, param_idx=param_idx, lam_true=lam_true, ax=ax)
+            ax.set_title(self._parse_title(result=result, lam_true=lam_true, nc=True))
+
+        fig.suptitle("Best MUD Estimates by Split For $\lambda_{param_idx}$")
+        fig.tight_layout()
+
     def get_full_df(
         self,
         df="state",
@@ -1602,27 +1764,49 @@ class SequentialProblem(PCAMUDProblem):
 
         return pd.concat(dfs, axis=0)
 
+    def _get_plot_df(self, idx=None, cols=["ratio"]):
+        """
+        Helper function to get sub df to plot
+
+        We use seaborn's kde plot on the dataframe of lambda samples to plot
+        initial and updated distributions, but just weighted appropriately with
+        the ratio. If want to plot solution using a different number of
+        components as the optimal one stored in the 'ratio' column of the
+        samples dataframe, then we have to get it from the pca_states dataframe
+        which stores the results from the `solve` routine. In this helper method
+        we extract those columns if necessary and append them to the state
+        dataframe for plotting.
+        """
+        state_cols = self.split_states[
+            (self.split_states["nc"] == idx[1])
+            & (self.split_states["split"] == idx[0])
+            & (self.split_states["qoi_comb"] == idx[2])
+        ][cols].add_suffix("_plot")
+        df = self.state.join(state_cols)
+        col_names = [f"{c}_plot" for c in cols]
+        mud_point = get_df(self.split_results.loc[[idx]], "lam_MUD", self.n_params)[0]
+
+        return df, mud_point, col_names
+
     def _parse_title(
         self,
-        nc=None,
+        result=None,
         lam_true=None,
+        nc=True,
+        qoi_comb=False,
+        split=True,
     ):
         """
         Parse title for plots
         """
-        kl = self.result["kl"].values[0]
-        e_r = self.result["e_r"].values[0]
-        title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
-        if lam_true is not None:
-            l2_err = np.linalg.norm(lam_true - self.mud_point)
-            title = (
-                "$||\lambda^{{\dagger}} - \lambda^{{MUD}}||_{{\ell_2}}$"
-                + f" = {l2_err:.3f},  "
-                + title
-            )
-        best_nc = self.result[self.best_method].idxmax()
-        title = f"nc = {best_nc[1]}, " + title
-        title = f"Iteration {best_nc[0]}: " + title
+        result = self.result if result is None else result
+        title = super()._parse_title(result=result, lam_true=lam_true, nc=False)
+        if nc:
+            title = f"{result.index[0][1]} NC, " + title
+        if qoi_comb:
+            title = f"qoi_comb = {result.index[0][2]}, " + title
+        if split:
+            title = f"Split {result.index[0][0]}: " + title
 
         return title
 

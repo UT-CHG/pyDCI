@@ -3,18 +3,23 @@ Dynamic Model Class
 
 """
 import pdb
-from typing import Callable, List, Optional, Union, Tuple
 import random
+from typing import Callable, List, Optional, Tuple, Union
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from alive_progress import alive_bar
-from scipy.stats.distributions import uniform
-from rich.table import Table
-
 import seaborn as sns
-import matplotlib.pyplot as plt
-from pydci.log import logger, log_table
+from alive_progress import alive_bar
+from matplotlib.patches import Rectangle
+from rich.table import Table
+from scipy.stats.distributions import uniform
+
+from pydci import SplitSequentialProblem
+from pydci.log import log_table, logger
 from pydci.utils import add_noise, get_df, get_uniform_box, put_df, set_shape
+
+interval_colors = sns.color_palette("muted", n_colors=50)
 
 
 class DynamicModel:
@@ -60,6 +65,7 @@ class DynamicModel:
 
         self.samples = []
         self.data = []
+        self.probs = []
 
     @property
     def n_params(self) -> int:
@@ -279,7 +285,7 @@ class DynamicModel:
         state_idx=0,
         time_col="ts",
         meas_col=None,
-        window_type=None,
+        window_type="line",
         plot_shifts=True,
         markersize=100,
         ax=None,
@@ -293,10 +299,12 @@ class DynamicModel:
             fig, ax = plt.subplots(1, 1, figsize=figsize)
 
         # Plot each column (state) of data on a separate subplot
+        max_it = len(self.data) - 1
         for iteration, df in enumerate(self.data):
             n_ts = len(df)
             n_states = len([x for x in df.columns if x.startswith("q_lam_true")])
 
+            label = None if iteration != (max_it) else "True State"
             sns.lineplot(
                 x="ts",
                 y=f"q_lam_true_{state_idx}",
@@ -304,10 +312,11 @@ class DynamicModel:
                 color="blue",
                 data=df,
                 linewidth=2,
-                label="True State",
+                label=label,
             )
             # Add Measurement Data to the plot
             if plot_measurements:
+                label = None if iteration != (max_it) else "Measurements"
                 sns.scatterplot(
                     x="ts",
                     y=f"q_lam_obs_{state_idx}",
@@ -316,10 +325,9 @@ class DynamicModel:
                     data=df,
                     s=markersize,
                     marker="*",
-                    label="Measurements",
+                    label=label,
                     zorder=10,
                 )
-            ylims_save = ax.get_ylim()
             # Add Push Forward Data to the plot
             if plot_samples:
                 cols = [f"q_lam_{i}" for i in range(n_states * n_ts)]
@@ -341,7 +349,9 @@ class DynamicModel:
                     )
                     sample_df["sample_flag"] = df["sample_flag"]
                     label = f"Samples ({to_plot} random)"
-                    label = None if i != (to_plot - 1) else label
+                    label = (
+                        None if (i != (to_plot - 1) | iteration != max_it) else label
+                    )
                     sns.lineplot(
                         x="ts",
                         y=f"q_lam_{state_idx}",
@@ -378,6 +388,7 @@ class DynamicModel:
                         columns=["ts", f"q_lam_{state_idx}"],
                     )
                     best_df["sample_flag"] = df["sample_flag"]
+                    label = None if iteration != (len(self.data)) else "Best Sample"
                     sns.lineplot(
                         x="ts",
                         y=f"q_lam_{state_idx}",
@@ -387,7 +398,7 @@ class DynamicModel:
                         data=best_df,
                         linestyle="--",
                         alpha=0.5,
-                        label=f"Best Sample",
+                        label=label,
                     )
                     sns.scatterplot(
                         x="ts",
@@ -409,7 +420,6 @@ class DynamicModel:
                 #     alpha=0.5,
                 #     label="Worst Sample",
                 # )
-            ax.set_ylim(ylims_save)
 
             if window_type == "line":
                 ax.axvline(
@@ -457,3 +467,51 @@ class DynamicModel:
         plt.tight_layout()
 
         return ax
+
+    def estimate_params(
+        self,
+        time_windows,
+        num_samples=100,
+        diff=0.5,
+        splits_per=1,
+        plot=True,
+    ):
+        """
+        Iterative estimate
+        """
+        pi_in = None
+        samples = self.get_uniform_initial_samples(num_samples=num_samples, scale=diff)
+        best_flag = np.empty((num_samples, 1), dtype=bool)
+        for it, t in enumerate(time_windows):
+            logger.info(f"Starting iteration from {self.t0} to {t}")
+            args = self.forward_solve(t, samples=samples)
+            prob = SplitSequentialProblem(
+                args["samples"], args["data"], args["std_dev"], pi_in=pi_in
+            )
+            prob.solve(num_splits=splits_per)
+            logger.info(f"Solution {prob.result}")
+            best_flag[:] = False
+            best_flag[prob.mud_arg] = True
+            self.samples[it]["best_flag"] = best_flag
+            self.probs.append(prob)
+            if plot:
+                plt.close("all")
+                self.plot_states()
+
+            samples = prob.sample_dist(num_samples=num_samples)
+
+        self.probs[-1].param_density_plots(lam_true=self.lam_true)
+
+    def plot_states(self, base_size=5):
+        """
+        Plot states over time
+        """
+        grid_plot = self._closest_factors(self.n_states)
+        fig, ax = plt.subplots(
+            grid_plot[0],
+            grid_plot[1],
+            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
+        )
+        for i, ax in enumerate(ax.flat):
+            self.plot_state(state_idx=i, ax=ax)
+            ax.set_title(f"State {i}: Temporal Evolution")

@@ -1,12 +1,11 @@
 """
 Lotka-Volterra (Predator-Prey) System
 """
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from scipy.integrate import odeint
 
 from pydci.Model import DynamicModel
-
 
 SEIRS_PARAM_MINS = [0, 0, 0, 0]
 
@@ -21,10 +20,11 @@ SEIRS_NOISE = 0.005
 
 # Parameters from bjornstad2020seirs paper
 SEIRS_P1 = [
-    3.0/14., # beta transmission rate
-    1./7.,   # sigma incubation rate i.e. rate at which exposed hosts become infected - 1 week
-    1./14.,  # gamma  mean recovery rate - 2 weeks
-    1./365.,  # xi - loss off imunity rate - 1 year
+    3.0 / 14.0,  # beta transmission rate
+    1.0
+    / 7.0,  # sigma incubation rate i.e. rate at which exposed hosts become infected - 1 week
+    1.0 / 14.0,  # gamma  mean recovery rate - 2 weeks
+    1.0 / 365.0,  # xi - loss off imunity rate - 1 year
 ]
 
 
@@ -33,21 +33,21 @@ SEIRS_P2 = [
     0.3,  # beta
     0.25,  # sigma
     0.1,  # gamma
-    0.1,  # xi 
+    0.1,  # xi
 ]
 # (2) Virus Mutation: => Faster Incubation Rate (sigma) - Time 75
 SEIRS_P3 = [
     0.3,  # beta
     0.3,  # sigma
     0.15,  # gamma
-    0.1,  # xi 
+    0.1,  # xi
 ]
 
 SEIRS_X0 = [
-        0.99,    # susceptible
-        0.001,  # exposed
-        0,  # infected 
-        0,  # recovered
+    0.99,  # susceptible
+    0.010,  # exposed
+    0,  # infected
+    0,  # recovered
 ]
 
 
@@ -116,6 +116,3 @@ class SEIRSModel(DynamicModel):
         fig, ax = plt.subplots(4, 1, figsize=(18, 16))
         for i, ax in enumerate(ax.flat):
             self.plot_state(state_idx=i, ax=ax)
-
-
-

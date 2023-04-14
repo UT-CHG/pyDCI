@@ -156,3 +156,9 @@ def get_df(df, name, size=1):
     for idx in range(size):
         val[:, idx] = df[f"{name}_{idx}"].values
     return val
+
+
+def closest_factors(n):
+    for i in range(int(n**0.5), 0, -1):
+        if n % i == 0:
+            return (i, n // i)
