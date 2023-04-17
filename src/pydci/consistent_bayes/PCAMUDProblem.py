@@ -43,6 +43,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from numpy.typing import ArrayLike
+from numpy.linalg import LinAlgError
 from rich.table import Table
 from scipy.stats import distributions as dist  # type: ignore
 from scipy.stats import rv_continuous  # type: ignore
@@ -201,9 +202,6 @@ class PCAMUDProblem(MUDProblem):
 
         self.q_pca(mask=pca_mask, max_nc=max_nc)
         all_qoi = self.q_lam
-        results_cols = (
-            ["nc"] + [f"lam_MUD_{i}" for i in range(self.n_params)] + ["e_r", "kl"]
-        )
         results = np.zeros((len(self.pca["vecs"]), self.n_params + 3))
         results = []
         dists = []
@@ -222,6 +220,14 @@ class PCAMUDProblem(MUDProblem):
                     continue
                 else:
                     raise v
+            except LinAlgError as le:
+                if "data appears to lie in lower-dimensional" in str(le):
+                    logger.error(f"Failed to gkde using {nc} components")
+                    logger.error(f"Variance: {self.pca[var][nc-1]}")
+                    continue
+                else:
+                    raise le
+
             self.result["nc"] = nc
             results.append(self.result.set_index("nc"))
             pca_state = self.state[

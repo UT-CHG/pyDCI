@@ -2,11 +2,40 @@ import importlib
 
 from pydci import Model
 
-importlib.reload(Model)
 import pdb
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+class Monomial1D(Model.DynamicModel):
+    
+    def __init__(self,
+                 p,
+                 x0=[0, 0], # Note in the constant monomial case, initial state won't matter
+                 lam_true=[0.75],
+                 solve_ts=1.0,
+                 sample_ts=1.1,
+                 measurement_noise=0.1,
+                 **kwargs
+                ):
+        self.p = p
+        super().__init__(x0, lam_true,
+                         solve_ts=solve_ts,
+                         sample_ts=sample_ts,
+                         measurement_noise=measurement_noise,
+                         **kwargs)
+
+        
+    def forward_model(
+        self,
+        x0,
+        times,
+        lam,
+    ):
+        """
+        Monomial Forward Model
+        """
+        return np.array([[lam[0]**self.p]])
 
 
 class Monomial2D(Model.DynamicModel):

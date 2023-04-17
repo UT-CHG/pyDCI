@@ -152,6 +152,7 @@ class DynamicModel:
         x0_temp = self.x0
         self.t0 = ts[sample_ts_flag][-1]
         self.x0 = measurements[sample_ts_flag][-1]
+        logger.info(f'end_point: {self.t0}, {self.x0}')
 
         push_forwards = None
         if samples is not None:
@@ -249,8 +250,9 @@ class DynamicModel:
             f"Drawing {num_samples} from uniform at:\n"
             + f"\tloc: {loc}\n\tscale: {scale}"
         )
-        samples = uniform.rvs(loc=loc, scale=scale, size=(num_samples, self.n_params))
-        return samples
+        dist = uniform(loc=loc, scale=scale)
+        samples = dist.rvs(size=(num_samples, self.n_params))
+        return dist, samples
 
     def forward_model(
         self,
@@ -274,7 +276,7 @@ class DynamicModel:
             Tuple of parameters to set for model run. These should correspond
             to the model parameters being varied.
         """
-        raise NotImplementedError(f"forward_model() base class skeleton.")
+        raise NotImplementedError("forward_model() base class skeleton.")
 
     def plot_state(
         self,
@@ -304,13 +306,18 @@ class DynamicModel:
             n_ts = len(df)
             n_states = len([x for x in df.columns if x.startswith("q_lam_true")])
 
-            label = None if iteration != (max_it) else "True State"
+            plot_vals = df
+            label = "True State"
+            if iteration != max_it:
+                label = None
+                plot_vals = df[df['ts'] <= df['ts'][
+                    df['sample_flag'] == True].max()]
             sns.lineplot(
                 x="ts",
                 y=f"q_lam_true_{state_idx}",
                 ax=ax,
                 color="blue",
-                data=df,
+                data=plot_vals,
                 linewidth=2,
                 label=label,
             )
@@ -352,13 +359,18 @@ class DynamicModel:
                     label = (
                         None if (i != (to_plot - 1) | iteration != max_it) else label
                     )
+                    plot_vals = sample_df
+                    if iteration != max_it:
+                        plot_vals = sample_df[
+                                sample_df['ts'] <= sample_df['ts'][
+                                    sample_df['sample_flag'] == True].max()]
                     sns.lineplot(
                         x="ts",
                         y=f"q_lam_{state_idx}",
                         legend=False,
                         ax=ax,
                         color="purple",
-                        data=sample_df,
+                        data=plot_vals,
                         alpha=0.2,
                         label=label,
                     )
@@ -474,13 +486,13 @@ class DynamicModel:
         num_samples=100,
         diff=0.5,
         splits_per=1,
-        plot=True,
+        search_params={'num_splits': 1},
     ):
         """
         Iterative estimate
         """
-        pi_in = None
-        samples = self.get_uniform_initial_samples(num_samples=num_samples, scale=diff)
+        pi_in, samples = self.get_uniform_initial_samples(
+                num_samples=num_samples, scale=diff)
         best_flag = np.empty((num_samples, 1), dtype=bool)
         for it, t in enumerate(time_windows):
             logger.info(f"Starting iteration from {self.t0} to {t}")
@@ -488,19 +500,13 @@ class DynamicModel:
             prob = SplitSequentialProblem(
                 args["samples"], args["data"], args["std_dev"], pi_in=pi_in
             )
-            prob.solve(num_splits=splits_per)
+            prob.solve(**search_params)
             logger.info(f"Solution {prob.result}")
             best_flag[:] = False
             best_flag[prob.mud_arg] = True
             self.samples[it]["best_flag"] = best_flag
             self.probs.append(prob)
-            if plot:
-                plt.close("all")
-                self.plot_states()
-
             samples = prob.sample_dist(num_samples=num_samples)
-
-        self.probs[-1].param_density_plots(lam_true=self.lam_true)
 
     def plot_states(self, base_size=5):
         """
@@ -515,3 +521,17 @@ class DynamicModel:
         for i, ax in enumerate(ax.flat):
             self.plot_state(state_idx=i, ax=ax)
             ax.set_title(f"State {i}: Temporal Evolution")
+
+    def plot_iterations(self, base_size=5):
+        """
+        Plot states over time
+        """
+        grid_plot = self._closest_factors(self.n_params)
+        fig, ax = plt.subplots(
+            grid_plot[0],
+            grid_plot[1],
+            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
+        )
+        for prob in len(self.probs):
+            for i, ax in enumerate(ax.flat):
+                prob.plot_L(param_idx=i, ax=ax)
