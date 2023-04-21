@@ -202,12 +202,9 @@ class SplitSequentialProblem(PCAMUDProblem):
             qoi_combs = self._get_qoi_combinations()
 
             results = []
-            qc_strs = []
             pca_states = []
             logger.info(f"{qoi_method}: Trying {len(qoi_combs)} qoi combs.")
             for q_idx, qc in enumerate(qoi_combs):
-                qc_strs.append(self._create_binary_string(qc, self.n_qoi))
-                logger.info(f"Trying comb of size {len(qc)}: {qc_strs[-1]}")
                 super().solve(
                     pca_mask=qc,
                     max_nc=max_nc,

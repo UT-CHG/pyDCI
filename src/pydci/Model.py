@@ -45,10 +45,13 @@ class DynamicModel:
         measurement_noise=0.05,
         solve_ts=0.2,
         sample_ts=1,
-        hot_starts=True,
         param_mins=None,
         param_maxs=None,
+        state_mins=None,
+        state_maxs=None,
         param_shifts=None,
+        num_states=None,
+        max_states=10,
     ):
         self.x0 = x0
         self.t0 = t0
@@ -58,10 +61,16 @@ class DynamicModel:
         self.measurement_noise = measurement_noise
         self.solve_ts = solve_ts
         self.sample_ts = sample_ts
-        self.hot_starts = hot_starts
         self.param_shifts = {} if param_shifts is None else param_shifts
         self.param_mins = param_mins
         self.param_maxs = param_maxs
+        self.state_mins = state_mins
+        self.state_maxs = state_maxs
+
+        # TODO: Hard code max number of states
+        num_states = self.n_states if self.n_states < max_states else max_states
+        self.state_idxs= np.random.choice(self.n_states,
+                                          size=num_states)
 
         self.samples = []
         self.data = []
@@ -74,6 +83,10 @@ class DynamicModel:
     @property
     def n_states(self) -> int:
         return len(self.x0)
+
+    @property
+    def n_sensors(self) -> int:
+        return len(self.state_idxs)
 
     def get_param_intervals(self, t0, t1):
         """
@@ -142,6 +155,7 @@ class DynamicModel:
 
         sample_step = int(self.sample_ts / self.solve_ts)
         sample_ts_flag = np.mod(np.arange(len(ts)), sample_step) == 0
+        sample_ts_idxs = np.where(sample_ts_flag)[0]
         measurements = np.empty((len(ts), self.n_states))
         measurements[:] = np.nan
         measurements[sample_ts_flag] = np.reshape(
@@ -161,7 +175,9 @@ class DynamicModel:
                     self.samples_x0 = self.get_initial_condition(x0_temp, len(samples))
                 samples_x0 = self.samples_x0
 
-            push_forwards = np.zeros((len(samples), len(ts), self.n_states))
+            push_forwards = np.zeros((len(samples),
+                                      np.sum(sample_ts_flag),
+                                      self.n_sensors))
             with alive_bar(
                 len(samples),
                 title="Solving model sample set:",
@@ -171,14 +187,12 @@ class DynamicModel:
             ) as bar:
                 for j, s in enumerate(samples):
                     push_forwards[j, :, :] = self.forward_model(
-                        samples_x0[j], ts, tuple(s)
-                    )
+                            samples_x0[j], ts, tuple(s))[
+                                    sample_ts_idxs][:, self.state_idxs]
                     bar()
 
-            if self.hot_starts:
-                self.samples_x0[:] = self.get_initial_condition(self.x0, len(samples))
-            else:
-                self.samples_x0 = push_forwards[:, sample_ts_flag[-1], :]
+            self.samples_x0[:] = self.get_initial_condition(self.x0,
+                                                            len(samples))
 
         # Store everything in state DF
         data_df = pd.DataFrame(ts, columns=["ts"])
@@ -190,33 +204,17 @@ class DynamicModel:
         # self.states.append(state_df)
         sub_df = data_df[data_df["sample_flag"] == True]
         args = {
-            "data": np.reshape(
-                get_df(sub_df, "q_lam_obs", size=self.n_states),
-                (len(sub_df) * self.n_states, -1),
-            ),
+            "data": measurements[sample_ts_flag][:,self.state_idxs].reshape(
+                np.sum(sample_ts_flag) * self.n_sensors, -1),
             "std_dev": self.measurement_noise,
         }
         if push_forwards is not None:
+            q_lam_cols = [f"q_lam_{x}" for x in range(np.sum(
+                sample_ts_flag * self.n_sensors))]
             full_samples_df = pd.DataFrame(
-                data=samples, columns=[f"lam_{x}" for x in range(self.n_params)]
-            )
-            samples_df = full_samples_df.copy()
-            full_samples_df = put_df(
-                samples_df,
-                "q_lam",
-                np.reshape(push_forwards, (len(samples), -1)),
-                size=self.n_states * len(ts),
-            )
-            samples_df = put_df(
-                samples_df,
-                "q_lam",
-                np.reshape(push_forwards[:, sample_ts_flag, :], (len(samples), -1)),
-                size=self.n_states * np.sum(sample_ts_flag),
-            )
-
-            args["samples"] = samples_df
-
-            # Only append if we have samples as well
+                np.hstack([samples, push_forwards.reshape(len(samples), -1)]),
+                columns=[f"lam_{x}" for x in range(self.n_params)] + q_lam_cols)
+            args['samples'] = full_samples_df
             self.data.append(data_df)
             self.samples.append(full_samples_df)
 
@@ -227,12 +225,16 @@ class DynamicModel:
         Get Initial condition for a number of samples. Initial condition is
         given by populating x0 with measurement noise for each sample.
         """
-        init_conds = np.empty((num_samples, self.n_states))
+        init_conds = np.empty((num_samples, len(x0)))
         init_conds[:] = x0
-        init_conds = np.reshape(
-            add_noise(init_conds.ravel(), self.measurement_noise),
-            (num_samples, self.n_states),
-        )
+        init_conds = add_noise(init_conds.ravel(), self.measurement_noise)
+        # TODO: impose state minimums: for example - IF can't be negative
+        if self.state_mins is not None:
+            init_conds[init_conds < self.state_mins] = self.state_mins
+        if self.state_maxs is not None:
+            init_conds[init_conds > self.state_maxs] = self.state_maxs
+        init_conds = np.reshape(init_conds, (num_samples, len(x0)))
+
         return init_conds
 
     def get_uniform_initial_samples(self, center=None, scale=0.5, num_samples=1000):
@@ -491,6 +493,8 @@ class DynamicModel:
         """
         Iterative estimate
         """
+        if num_samples < self.n_params:
+            raise ValueError(f'# of samples must be at least > # of params')
         pi_in, samples = self.get_uniform_initial_samples(
                 num_samples=num_samples, scale=diff)
         best_flag = np.empty((num_samples, 1), dtype=bool)

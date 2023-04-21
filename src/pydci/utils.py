@@ -107,7 +107,7 @@ def get_uniform_box(center, factor=0.5, mins=None, maxs=None):
     center = np.array(center)
     if np.sum(center) != 0.0:
         loc = center - np.abs(center * factor)
-        scale = 2 * center * factor
+        scale = np.abs(2 * center * factor)
     else:
         loc = center - factor
         scale = 2 * factor

@@ -134,8 +134,9 @@ class PCAMUDProblem(MUDProblem):
         """
         mask = np.arange(self.n_qoi) if mask is None else mask
         residuals = np.subtract(self.data[mask].T, self.qoi[:, mask]) / self.std_dev
-        if max_nc is None:
-            max_nc = self.n_params if self.n_params < len(mask) else len(mask)
+        max_nc = self.n_params if max_nc is None else max_nc
+        min_shape = min(residuals.shape)
+        max_nc = max_nc if max_nc < min_shape else min_shape
 
         # Standarize and perform linear PCA
         sc = StandardScaler()
@@ -221,9 +222,9 @@ class PCAMUDProblem(MUDProblem):
                 else:
                     raise v
             except LinAlgError as le:
-                if "data appears to lie in lower-dimensional" in str(le):
+                if "data appears to lie in a lower-dimensional" in str(le):
                     logger.error(f"Failed to gkde using {nc} components")
-                    logger.error(f"Variance: {self.pca[var][nc-1]}")
+                    logger.error(f"Variance: {self.pca['var'][nc-1]}")
                     continue
                 else:
                     raise le

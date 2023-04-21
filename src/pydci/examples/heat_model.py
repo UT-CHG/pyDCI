@@ -1,20 +1,31 @@
 import pdb
 from pathlib import Path
-from typing import Callable
+from typing import Callable, List
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import pyvista
 import ufl
 from alive_progress import alive_bar
 from dafi import random_field as rf
 from dolfinx import fem, io, mesh, plot
 from mpi4py import MPI
 from petsc4py import PETSc
+from scipy.stats.distributions import norm, uniform
+
+from pydci.Model import DynamicModel
+from pydci.log import logger
+
+pyvsita_flag = False
+try:
+    import pyvista
+    pyvsita_flag = True
+except ImportError as ie:
+    logger.warning('Pyvista not found')
 
 
-class HeatModel:
+
+class HeatModel(DynamicModel):
     """
     Solves the Heat Equation using Finite Element Method with Fenics.
 
@@ -47,42 +58,48 @@ class HeatModel:
 
     def __init__(
         self,
-        T=1.0,
-        t=0.0,
-        dt=0.001,
-        sample_ts=0.2,
+        x0=None,
+        t0=0.0,
+        measurement_noise=0.05,
+        solve_ts=0.0001,
+        sample_ts=0.1,
         nx=50,
         ny=50,
-        mean=0.0,
+        mean=1.0,
         std_dev=1.0,
         length_scales=[0.1, 0.1],
-        nmodes=10,
+        nmodes=4,
         true_k_x=None,
-        init_cond=None,
-        setup=True,
+        max_states=500,
     ):
-        self.T = T
-        self.t = t
-        self.dt = dt
-        self.num_steps = int(T / dt)
-        self.sample_ts = sample_ts
         self.nx = nx
         self.ny = ny
         self.mean = mean
         self.sd = std_dev
         self.lscales = length_scales
         self.nmodes = nmodes
-        self.true_k_x = true_k_x
-
         # Create initial condition
         def def_init(x, a=5):
             return np.exp(-a * (x[0] ** 2 + x[1] ** 2))
-
-        self.initial_condition = def_init if init_cond is None else init_cond
+        self.initial_condition = def_init if x0 is None else x0
 
         # Setup simulation
-        if setup:
-            self.setup_simulation()
+        self.setup_simulation(true_k_x=true_k_x)
+
+        # Note we set a dummy lam_true for now because when we set thermal
+        # diffusivity field we overwrite it with the true lam coefficients.
+        super().__init__(
+            self.uh.x.array.ravel(),
+            self.lam_true,
+            t0=t0,
+            measurement_noise=measurement_noise,
+            solve_ts=solve_ts,
+            sample_ts=sample_ts,
+            param_mins=None,
+            param_maxs=None,
+            param_shifts=None,
+            max_states=max_states,
+        )
 
     def _create_variational_problem(self, params=None):
         """
@@ -91,16 +108,18 @@ class HeatModel:
         This is called on each run of `run_model()` to reset the parameters
         of the simulation as necessary.
         """
-        if params is not None:
-            self.set_k_x(params)
+        params = self.lam_ture if params is None else params
+        proj_vals = self.reconstruct(params, log=True)
+        kx = fem.Function(self.V)
+        kx.x.array[:] = proj_vals
 
         u, v = ufl.TrialFunction(self.V), ufl.TestFunction(self.V)
         f = fem.Constant(self.domain, PETSc.ScalarType(0))
         a = (
             u * v * ufl.dx
-            + self.dt * self.kx * ufl.dot(ufl.grad(u), ufl.grad(v)) * ufl.dx
+            + self.solve_ts * kx * ufl.dot(ufl.grad(u), ufl.grad(v)) * ufl.dx
         )
-        L = (self.u_n + self.dt * f) * v * ufl.dx
+        L = (self.u_n + self.solve_ts * f) * v * ufl.dx
 
         # Prepare linear algebra objects
         self.bilinear_form = fem.form(a)
@@ -117,7 +136,90 @@ class HeatModel:
         solver.getPC().setType(PETSc.PC.Type.LU)
         self.solver = solver
 
-    def set_kl(self, lscales=None, nmodes=None, sd=None, normalize=True):
+    def project(self, field=None, mean=None, log=True):
+        """
+        Set thermal diffusivity field function over space
+        """
+        if field is None:
+            field = self.true_field
+
+        # make sure mean of KL expansion set
+        if mean is not None:
+            self.mean = mean
+
+        # Work field into a KL expansion representation
+        if isinstance(self.mean, float) or isinstance(self.mean, int):
+            self.mean = float(self.mean) * np.ones(self.coords[:, 0].shape)
+        elif isinstance(self.mean, Callable):
+            self.mean = self.mean(self.coords[:, 0], self.coords[:, 1])
+
+        # Work field into a KL expansion representation
+        if isinstance(field, float) or isinstance(field, int):
+            # Constant over the space
+            field_vals = field * np.ones(len(self.coords[:, 0]))
+        elif isinstance(field, Callable):
+            # Project function onto space by evaluating over field
+            field_vals = field([self.coords[:, 0], self.coords[:, 1]])
+        else:
+            raise ValueError('field must be either a float/int for constant' + \
+                            'over domain or a function, an array of KL ' + \
+                            'coeffiecients or None for random field of' + \
+                            f'coeffiecients. Type: {type(field)}')
+
+        if log:
+            log_vals = np.log(field_vals / mean)
+            return rf.project_kl(log_vals, self.modes[1], mean=np.log(mean))
+        else:
+            return rf.project_kl(field_vals, self.modes[1], mean=mean)
+
+    def setup_simulation(self, true_k_x=None):
+        """
+        Setup Fenics Simulaltion domain, boundary, and functions.
+        """
+        # Define Domain
+        self.domain = mesh.create_rectangle(
+            MPI.COMM_WORLD,
+            [np.array([-2, -2]), np.array([2, 2])],
+            [self.nx, self.ny],
+            mesh.CellType.triangle,
+        )
+
+        # Function space
+        self.V = fem.FunctionSpace(self.domain, ("CG", 1))
+        self.coords = self.V.tabulate_dof_coordinates()[:, :2]
+        self.init_kl(lscales=self.lscales, nmodes=self.nmodes, sd=self.sd)
+
+        # Initial Conditions
+        u_n = fem.Function(self.V)
+        u_n.name = "u_n"
+        u_n.interpolate(self.initial_condition)
+        self.u_n = u_n
+
+        # Create boundary condition
+        fdim = self.domain.topology.dim - 1
+        boundary_facets = mesh.locate_entities_boundary(
+            self.domain, fdim, lambda x: np.full(x.shape[1], True, dtype=bool)
+        )
+        self.boundary_condition = fem.dirichletbc(
+            PETSc.ScalarType(0),
+            fem.locate_dofs_topological(self.V, fdim, boundary_facets),
+            self.V,
+        )
+
+        uh = fem.Function(self.V)
+        uh.name = "uh"
+        uh.interpolate(self.initial_condition)
+        self.uh = uh
+
+        # Initialize thermal diffusivity - Project true_k_x onto KL field,
+        # Then reconstruct and set to kx array for variatonal prob
+        if true_k_x is None:
+            self.lam_true = np.random.normal(0, 1, [1, self.nmodes])[0]
+        else:
+            self.lam_true = self.project(field=true_k_x,
+                                         mean=self.mean, log=True)
+
+    def init_kl(self, lscales=None, nmodes=None, sd=None, normalize=False):
         """
         Initializes KL Decomposition over grid for building thermal diffusivity
         field. Note the KL modes used at initialization are used throughout the
@@ -154,115 +256,23 @@ class HeatModel:
             exp += ((x_1 - x_2) / (self.lscales[i])) ** 2.0
 
         self.cov = self.sd**2 * np.exp(-0.5 * exp)
-        self.modes = rf.calc_kl_modes(self.cov, nmodes=self.nmodes, normalize=normalize)
+        self.modes = rf.calc_kl_modes(self.cov,
+                                      nmodes=self.nmodes,
+                                      normalize=normalize)
 
-        # print(f"Naive Evalues: {self.modes[0].shape}")
-        # print(f"Naive Modes: {self.modes[1].shape}")
-
-        # self.evalues1, self.modes1 = rf.calc_kl_modes_coverage(
-        #     self.cov, coverage=0.99, normalize=normalize
-        # )
-        # print(f"Coverage Evalues: {self.evalues1.shape}")
-        # print(f"Coverage Modes: {self.modes1.shape}")
-
-    def set_mean(self, mean=None):
+    def reconstruct(self, projection, mean=None, log=True):
         """
-        Seat mean of KL expansion
+        Given a set of kl coefficients
         """
-        if mean is not None:
-            self.mean = mean
-
-        # Work k_x into a KL expansion representation
-        if isinstance(self.mean, float) or isinstance(self.mean, int):
-            self.mean = float(self.mean) * np.ones(self.coords[:, 0].shape)
-        elif isinstance(self.mean, Callable):
-            self.mean = self.mean(self.coords[:, 0], self.coords[:, 1])
-
-    def set_k_x(self, k_x=None):
-        """
-        Set thermal diffusivity k_x function over space
-        """
-        if k_x is None:
-            k_x = self.true_k_x
-
-        # make sure mean of KL expansion set
-        self.set_mean()
-
-        # Work k_x into a KL expansion representation
-        if isinstance(k_x, float) or isinstance(k_x, int):
-            # Constant over the space
-            value = k_x
-
-            def default_k_x(x):
-                return value * np.ones(len(x[0]))
-
-            k_x = default_k_x
-
-        if isinstance(k_x, Callable):
-            # Project function onto space by evaluating over field
-            _, k_x, _ = self.project_field(k_x)
-
-        if k_x is None:
-            # None for k_x is
-            k_x = np.random.normal(0, 1, [1, self.nmodes])[0]
-
-        self.kx = fem.Function(self.V)
-        self.kx.x.array[:] = rf.reconstruct_kl(self.modes[1], k_x, mean=self.mean)[:, 0]
-
-        return k_x
-
-    def project_field(self, field_fun):
-        """
-        Given a python function f(x, y) -> z, project function using
-        KL expansion intiialized in init_field()
-        """
-        vals = field_fun([self.coords[:, 0], self.coords[:, 1]])
-        proj = rf.project_kl(vals, self.modes[1], mean=self.mean)
-        proj_vals = rf.reconstruct_kl(self.modes[1], proj, mean=self.mean)
-        return vals, proj, proj_vals
-
-    def setup_simulation(self):
-        """
-        Setup Fenics Simulaltion domain, boundary, and functions.
-        """
-
-        # Define Domain
-        self.domain = mesh.create_rectangle(
-            MPI.COMM_WORLD,
-            [np.array([-2, -2]), np.array([2, 2])],
-            [self.nx, self.ny],
-            mesh.CellType.triangle,
-        )
-
-        # Function space
-        self.V = fem.FunctionSpace(self.domain, ("CG", 1))
-        self.coords = self.V.tabulate_dof_coordinates()[:, :2]
-        self.set_kl(lscales=self.lscales, nmodes=self.nmodes, sd=self.sd)
-
-        # Initial Conditions
-        u_n = fem.Function(self.V)
-        u_n.name = "u_n"
-        u_n.interpolate(self.initial_condition)
-        self.u_n = u_n
-
-        # Create boundary condition
-        fdim = self.domain.topology.dim - 1
-        boundary_facets = mesh.locate_entities_boundary(
-            self.domain, fdim, lambda x: np.full(x.shape[1], True, dtype=bool)
-        )
-        self.boundary_condition = fem.dirichletbc(
-            PETSc.ScalarType(0),
-            fem.locate_dofs_topological(self.V, fdim, boundary_facets),
-            self.V,
-        )
-
-        uh = fem.Function(self.V)
-        uh.name = "uh"
-        uh.interpolate(self.initial_condition)
-        self.uh = uh
-
-        # Initialize thermal diffusivity
-        self.true_params = self.set_k_x()
+        mean = self.mean if mean is None else mean
+        if log:
+            mean = np.log(self.mean)
+            log_proj_vals = rf.reconstruct_kl(self.modes[1],
+                                              projection,
+                                              mean=mean)
+            return self.mean * np.exp(log_proj_vals)[:,0]
+        else:
+            return rf.reconstruct_kl(self.modes[1], projection, mean=mean)
 
     def run_model(self, params=None, fname=None, sample_ts=None):
         """
@@ -297,7 +307,6 @@ class HeatModel:
         >>> isinstance(snapshots, pd.DataFrame)
         True
         """
-
         self._create_variational_problem(params)
 
         if fname is not None:
@@ -318,9 +327,10 @@ class HeatModel:
         take_snap(self.uh.x.array.copy())
         snap_counter = 0.0
 
-        for i in range(self.num_steps):
-            self.t += self.dt
-            snap_counter += self.dt
+        num_steps = int(self.T / self.solve_ts)
+        for i in range(num_steps):
+            self.t += self.solve_ts
+            snap_counter += self.solve_ts
 
             # Update the right hand side reusing the initial vector
             with self.b.localForm() as loc_b:
@@ -355,18 +365,6 @@ class HeatModel:
 
         return snapshots
 
-    def reset_sim(self):
-        """
-        Reset a model run
-
-        Resets the current time of the HeatModel instance to 0, and
-        interpolates the initial condition to the function spaces u_n and uh.
-        Call after run_model() if you want to re-run with different params.
-        """
-        self.t = 0
-        self.u_n.interpolate(self.initial_condition)
-        self.uh.interpolate(self.initial_condition)
-
     def _init_axis(self, **kwargs):
         """
         Plotting utility for initializing figures
@@ -381,19 +379,25 @@ class HeatModel:
     def _process_field(self, field, project=False):
         """ """
         if field is None:
-            field = rf.reconstruct_kl(self.modes[1], self.true_params, mean=self.mean)
+            field = self.reconstruct(self.lam_true)
         elif isinstance(field, Callable):
             if project:
-                field, _, _ = self.project_field(field)
+                proj = self.project(field)
+                field = self.reconstruct(proj)
             else:
                 field = field([self.coords[:, 0], self.coords[:, 1]])
         else:
-            if field.shape == self.true_params.shape:
-                field = rf.reconstruct_kl(self.modes[1], field, mean=self.mean)
+            if field.shape == self.lam_true.shape:
+                field = self.reconstruct(field)
 
         return field
 
-    def plot_field(self, field=None, project=False, cbar=True, diff=None, **kwargs):
+    def plot_field(self,
+                   field=None,
+                   project=False,
+                   cbar=True,
+                   diff=None,
+                   **kwargs):
         """
         Plot a field characterized by either:
           1. function - field is a callable on the coordinates array. This
@@ -411,7 +415,8 @@ class HeatModel:
         if diff is not None:
             field = field - self._process_field(diff, project=project)
 
-        sc = ax.scatter(self.coords[:, 0], self.coords[:, 1], c=field, cmap="seismic")
+        sc = ax.scatter(self.coords[:, 0], self.coords[:, 1],
+                        c=field, cmap="seismic")
         ax.set_xlabel("$x_1$")
         ax.set_ylabel("$x_2$")
         ax.set_title("Field Sample $k(\mathbf{x})$")
@@ -419,6 +424,12 @@ class HeatModel:
         if cbar:
             cbar = plt.colorbar(sc)
             cbar.set_label("F(x)")
+
+    def plot_kl_diff(self, field=None, **kwargs):
+        """
+        Plot a difference between a field over the space and its KL expansion.
+        """
+        self.plot_field(field, diff=self.project(field))
 
     def plot_solution(self, snapshots, idx=0, cbar=True, **kwargs):
         """
@@ -459,6 +470,8 @@ class HeatModel:
         gif_name : str, optional
             The name of the output gif file. Default is 'u_time.gif'.
         """
+        if not pyvista_flag:
+            raise ImportError('Cannot create gif - pyvista not found')
         grid = pyvista.UnstructuredGrid(*plot.create_vtk_mesh(self.V))
         plotter = pyvista.Plotter()
         plotter.open_gif(gif_name)
@@ -535,7 +548,9 @@ class HeatModel:
         all_res = []
         with alive_bar(len(params), force_tty=True) as bar:
             for param in params:
-                self.reset_sim()
+                self.t = 0
+                self.u_n.interpolate(initial_condition)
+                self.uh.interpolate(initial_condition)
                 all_res.append(self.run_model(param))
                 bar()
 
@@ -547,6 +562,84 @@ class HeatModel:
             return params, out_file
         else:
             return params, all_res
+
+    def forward_model(
+        self,
+        x0: List[float],
+        times: np.ndarray,
+        lam: np.ndarray,
+        fname=None,
+    ) -> np.ndarray:
+        """
+        Forward Model
+
+        Stubb meant to be overwritten by inherited classes.
+
+        Parameters
+        ----------
+        x0 : List[float]
+            Initial conditions.
+        times: np.ndarray[float]
+            Time steps to solve the model for. Note that times[0] the model
+            is assumed to be at state x0.
+        parmaeters: Tuple
+            Tuple of parameters to set for model run. These should correspond
+            to the model parameters being varied.
+        """
+        # Set initial conditions (how to do?)
+        self.u_n.x.array[:] = np.array(x0).ravel()
+        self.uh.x.array[:] = np.array(x0).ravel()
+
+        # Create variational problme to solve given thermal diff. field lam
+        self._create_variational_problem(np.array(lam))
+
+        sol = np.zeros((len(times), self.n_states))
+        for i, t in enumerate(times):
+            sol[i] = self.uh.x.array.copy().ravel()
+
+            # Update the right hand side reusing the initial vector
+            with self.b.localForm() as loc_b:
+                loc_b.set(0)
+            fem.petsc.assemble_vector(self.b, self.linear_form)
+
+            # Apply Dirichlet boundary condition to the vector
+            fem.petsc.apply_lifting(
+                self.b, [self.bilinear_form], [[self.boundary_condition]]
+            )
+            self.b.ghostUpdate(
+                addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE
+            )
+            fem.petsc.set_bc(self.b, [self.boundary_condition])
+
+            # Solve linear problem
+            self.solver.solve(self.b, self.uh.vector)
+            self.uh.x.scatter_forward()
+
+            # Update solution at previous time step (u_n)
+            self.u_n.x.array[:] = self.uh.x.array
+
+        return sol
+    domain.sort(axis=1)
+
+    def k_x_mud_plot(self,
+                     iteration=0,
+                     figsize=(18,5)):
+        """
+        Plot estimated and True k(x)
+        """
+        iteration = 0
+        fig, ax = plt.subplots(1, 3, figsize=(18,5))
+        self.plot_field(field=self.probs[iteration].mud_point,
+                        ax=ax[0])
+        ax[0].set_title('$k^{MUD}(x)$')
+        self.plot_field(field=self.lam_true, ax=ax[1])
+        ax[1].set_title('$k^{\dagger}(x)$')
+        ax[1].set_ylabel('')
+        self.plot_field(field=self.probs[iteration].mud_point,
+                        diff=self.lam_true, ax=ax[2])
+        ax[2].set_title('Error')
+        ax[2].set_ylabel('')
+        fig.tight_layout
 
 
 # def parallel_run(model_configs, num_samples=10, workers=4):
