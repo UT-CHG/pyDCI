@@ -50,6 +50,7 @@ from scipy.stats import rv_continuous  # type: ignore
 from scipy.stats import entropy
 from scipy.stats import gaussian_kde as gkde  # type: ignore
 from scipy.stats.distributions import norm
+from alive_progress import alive_bar
 from sklearn.decomposition import PCA  # type: ignore
 from sklearn.preprocessing import StandardScaler  # type: ignore
 
@@ -139,6 +140,7 @@ class PCAMUDProblem(MUDProblem):
         max_nc = max_nc if max_nc < min_shape else min_shape
 
         # Standarize and perform linear PCA
+        logger.info(f'Computing PCA using {max_nc} components')
         sc = StandardScaler()
         pca = PCA(n_components=max_nc)
         X_train = pca.fit_transform(sc.fit_transform(residuals))
@@ -147,16 +149,155 @@ class PCAMUDProblem(MUDProblem):
             "vecs": pca.components_,
             "var": pca.explained_variance_,
         }
+        logger.info(f'PCA Variance: {pca.explained_variance_}')
 
         # Compute Q_PCA
         self.q_lam = residuals @ pca.components_.T
         self.state = put_df(self.state, "q_pca", self.q_lam, size=max_nc)
 
+    def save_state(self, vals):
+        """
+        Save current state, adding columns with values in vals dictionary
+        """
+        keys = vals.keys()
+        cols = [c for c in self.state.columns if c.startswith('lam_')]
+        cols += [c for c in self.state.columns if c.startswith('q_pca_')]
+        cols += ["weight", "pi_in", "pi_obs", "pi_pr", "ratio", "pi_up"]
+        state = self.state[cols].copy()
+        for key in keys:
+            state[key] = vals[key]
+        if self.pca_states is None:
+            self.pca_states = state
+        else:
+            self.pca_states = pd.concat([self.pca_states, state], axis=0)
+
     def solve(
         self,
         pca_mask: List[int] = None,
-        max_nc: int = None,
+        pca_components: List[int] = [0],
+    ):
+        """
+        Solve the parameter estimation problem
+
+        This extends the `MUDProblem` solution class by using the `q_pca()` map
+        to aggregate data between the observed and predicted values and
+        determine the best MUD estimate that fits the data.
+
+        Parameters
+        ----------
+        pca_mask: List[int], default=None
+            Used control what subset of the observed data is used in the data
+            constructed map `q_pca()`
+        components_mask: List[int], default=[0]
+            Used control what subset of pca components are used in Q_PCA map.
+        max_nc: int, default=None
+            Specifies the max number of principal components to use when doing
+            the PCA transformation on the residuals between the observed and
+            simulated data. If not specified, defaults to the min of the number
+            of states and the number of parameters.
+        """
+        self.q_pca(mask=pca_mask)
+        all_qoi = self.q_lam
+        self.q_lam = self.q_lam[:, pca_components]
+        self.dists["pi_obs"] = dist.norm(loc=len(pca_components) * [0], scale=1)
+        self.dists["pi_pr"] = None
+        try:
+            super().solve()
+        except ValueError as v:
+            if "array must not contain infs or NaNs" in str(v):
+                logger.error(f"Solve with {pca_components} components failed")
+            else:
+                raise v
+        except LinAlgError as le:
+            if "data appears to lie in a lower-dimensional" in str(le):
+                logger.error(f"GKDE failed using {pca_components} components")
+                var = [self.pca['var'][x] for x in pca_components]
+                logger.error(f"Variance: {var}")
+            else:
+                raise le
+        self.result['pca_components'] = str(pca_components)
+        self.result['pca_mask'] = str(pca_mask)
+        self.q_lam = all_qoi
+
+    def solve_it(
+        self,
+        pca_components=[[0]],
+        pca_splits: List[int] = [None],
         exp_thresh: float = 0.5,
+        state_extra: dict = None,
+    ):
+        """
+        Solve the parameter estimation problem
+
+        This extends the `MUDProblem` solution class by using the `q_pca()` map
+        to aggregate data between the observed and predicted values and
+        determine the best MUD estimate that fits the data.
+
+        Parameters
+        ----------
+        pca_mask: List[int], default=None
+            Used control what subset of the observed data is used in the data
+            constructed map `q_pca()`
+        components_mask: List[int], default=[0]
+            Used control what subset of pca components are used in Q_PCA map.
+        max_nc: int, default=None
+            Specifies the max number of principal components to use when doing
+            the PCA transformation on the residuals between the observed and
+            simulated data. If not specified, defaults to the min of the number
+            of states and the number of parameters.
+        exp_thresh: float, default=0.5
+            Threshold to accept a solution to the MUD problem as a valid
+            solution. Any solution more than `exp_thresh` away from 1.0 will
+            be deemed as violating the predictability assumption and not valid.
+        """
+
+        it_results = []
+        for j, pca_mask in enumerate(pca_splits):
+            str_val = pca_mask if pca_mask is not None else 'ALL'
+            logger.info(f'Using data for pca: {str_val}')
+            for i, pca_cs in enumerate(pca_components):
+                logger.info(f'Solving using pca components: {pca_cs}')
+                self.solve(
+                    pca_mask=pca_mask,
+                    pca_components=pca_cs,
+                )
+                e_r = self.result['e_r'].values[0]
+                state_vals = {'iteration': len(it_results),
+                              'pca_components': str(pca_cs),
+                              'pca_mask': str(pca_mask)}
+                if state_extra is not None:
+                    state_vals.update(state_extra)
+                self.save_state(state_vals)
+                it_results.append(self.result.copy())
+                it_results[-1]['i'] = i
+
+                if (diff := np.abs(e_r - 1.0)) > exp_thresh:
+                    logger.info(f'|E(r) - 1| = {diff} > {exp_thresh} - Stopping')
+                    break
+
+                if i != len(pca_components) - 1:
+                    logger.info('Updating weights')
+                    self.state['weight'] = self.state['ratio']
+                    self.dists["pi_in"] = None
+
+            if j != len(pca_splits) - 1:
+                logger.info('Updating weights')
+                self.state['weight'] = self.state['ratio']
+                self.dists["pi_in"] = None
+
+        self.it_results = pd.concat(it_results)
+        self.result = self.it_results.iloc[[-1]]
+
+        # Re-solve Using Best
+        self.solve(
+            pca_mask=eval(self.result['pca_mask'].values[0]),
+            pca_components=eval(self.result['pca_components'].values[0]),
+        )
+
+    def solve_search(
+        self,
+        search_list,
+        exp_thresh: float = 0.1,
         best_method: str = "closest",
     ):
         """
@@ -201,47 +342,30 @@ class PCAMUDProblem(MUDProblem):
         self.exp_thresh = exp_thresh
         self.best_method = best_method
 
-        self.q_pca(mask=pca_mask, max_nc=max_nc)
-        all_qoi = self.q_lam
-        results = np.zeros((len(self.pca["vecs"]), self.n_params + 3))
-        results = []
-        dists = []
-        nc_list = range(1, len(self.pca["vecs"]) + 1)
-        pca_states = []
-        for nc in nc_list:
-            logger.info(f"Solving using {nc} components")
-            self.q_lam = all_qoi[:, 0:nc]
-            self.dists["pi_obs"] = dist.norm(loc=nc * [0], scale=1)
-            self.dists["pi_pr"] = None
-            try:
-                super().solve()
-            except ValueError as v:
-                if "array must not contain infs or NaNs" in str(v):
-                    logger.error(f"Solve with {nc} components failed")
-                    continue
-                else:
-                    raise v
-            except LinAlgError as le:
-                if "data appears to lie in a lower-dimensional" in str(le):
-                    logger.error(f"Failed to gkde using {nc} components")
-                    logger.error(f"Variance: {self.pca['var'][nc-1]}")
-                    continue
-                else:
-                    raise le
-
-            self.result["nc"] = nc
-            results.append(self.result.set_index("nc"))
-            pca_state = self.state[
-                ["weight", "pi_obs", "pi_pr", "ratio", "pi_up"]
-            ].copy()
-            pca_state["nc"] = nc
-            pca_states.append(
-                pca_state[["nc", "weight", "pi_obs", "pi_pr", "ratio", "pi_up"]]
-            )
-            dists.append(self.dists)
+        all_search_results = []
+        all_results = []
+        with alive_bar(
+            len(search_list),
+            title="Solving for different combinations",
+            force_tty=True,
+            receipt=True,
+            length=40,
+        ) as bar:
+            for idx, (pca_splits, pca_components) in enumerate(search_list):
+                logger.info(f'Solving with:\npca_splits: {pca_splits}\n' +
+                            f'pc: {pca_components}')
+                self.solve_it(pca_components=pca_components,
+                              pca_splits=pca_splits,
+                              exp_thresh=exp_thresh,
+                              state_extra={'index': idx})
+                all_search_results.append(self.it_results.copy())
+                all_search_results[-1]['index'] = idx
+                all_results.append(self.result.copy())
+                all_results[-1]['index'] = idx
+                bar()
 
         # Parse DataFrame with results of mud estimations for each ts choice
-        res_df = pd.concat(results)  # , keys=nc_list, names=['nc'])
+        res_df = pd.concat(all_results)  # , keys=nc_list, names=['nc'])
         res_df["predict_delta"] = np.abs(res_df["e_r"] - 1.0)
         res_df["within_thresh"] = res_df["predict_delta"] <= self.exp_thresh
         res_df["closest"] = np.logical_and(
@@ -257,19 +381,15 @@ class PCAMUDProblem(MUDProblem):
             res_df["kl"] <= res_df[res_df["within_thresh"]]["kl"].min(),
             res_df["within_thresh"],
         )
-        best_nc = res_df[self.best_method].idxmax()
-        self.q_lam = all_qoi[:, 0:best_nc]
-        self.dists["pi_obs"] = dist.norm(loc=best_nc * [0], scale=1)
-        self.dists["pi_pr"] = None
-        super().solve()
-        # self.state = self.state.join(pca_states)
-        self.pca_states = pd.concat(pca_states, axis=0)
-        self.pca_results = res_df
-        self.result = res_df.loc[[best_nc]]
+
+        # Set to best
+        self.search_results = res_df
+        self.all_search_results = pd.concat(all_search_results)
+        self.result = res_df[res_df[self.best_method]]
 
     def plot_L(
         self,
-        nc=None,
+        index=None,
         lam_true=None,
         mud_point=None,
         df=None,

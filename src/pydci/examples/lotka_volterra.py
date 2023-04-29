@@ -9,18 +9,18 @@ from pydci.Model import DynamicModel
 
 # Baseline
 LV_P1 = [
-    1.1,  # alpha - prey growth rate
-    0.4,  # beta - prey death rate
-    0.5,  # gamma - predator death rate
-    0.1,  # delta - predator growth rate
+    1.0,  # alpha - prey growth rate
+    0.02,  # beta - prey death rate
+    0.01,  # delta - predator growth rate
+    1.0,  # gamma - predator death rate
 ]
 
 # Increase in death rate of prey
 LV_P2 = [
     1.1,  # alpha - prey growth rate
     0.7,  # beta - prey death rate
-    0.5,  # gamma - predator death rate
     0.1,  # delta - predator growth rate
+    0.5,  # gamma - predator death rate
 ]
 
 LV_PARAM_MINS = 4 * [0.0]
@@ -52,7 +52,7 @@ def lotka_volterra_system(
     np.ndarray
         The derivatives of the states with respect to time.
     """
-    alpha, beta, gamma, delta = parameters
+    alpha, beta, delta, gamma = parameters
 
     xdot = np.array(
         [
@@ -63,14 +63,17 @@ def lotka_volterra_system(
     return xdot
 
 
-class LotkaVolteraModel(DynamicModel):
+class LotkaVolterraModel(DynamicModel):
+    """
+    Lotka-Volterra Predator Prey model
+    """
     def __init__(
         self,
-        x0=[2, 4],
+        x0=[100, 10],
         lam_true=LV_P1,
-        solve_ts=0.1,
-        sample_ts=1.0,
-        measurement_noise=0.25,
+        solve_ts=0.01,
+        sample_ts=1,
+        measurement_noise=1,
         **kwargs,
     ):
         super().__init__(

@@ -69,8 +69,10 @@ class DynamicModel:
 
         # TODO: Hard code max number of states
         num_states = self.n_states if self.n_states < max_states else max_states
-        self.state_idxs= np.random.choice(self.n_states,
-                                          size=num_states)
+        self.state_idxs = np.random.choice(self.n_states,
+                                          size=num_states,
+                                          replace=False)
+        self.state_idxs.sort()
 
         self.samples = []
         self.data = []
@@ -202,9 +204,8 @@ class DynamicModel:
         data_df = put_df(data_df, "q_lam_true", true_vals, size=self.n_states)
         data_df = put_df(data_df, "q_lam_obs", measurements, size=self.n_states)
         # self.states.append(state_df)
-        sub_df = data_df[data_df["sample_flag"] == True]
         args = {
-            "data": measurements[sample_ts_flag][:,self.state_idxs].reshape(
+            "data": measurements[sample_ts_flag][:, self.state_idxs].reshape(
                 np.sum(sample_ts_flag) * self.n_sensors, -1),
             "std_dev": self.measurement_noise,
         }
@@ -339,7 +340,8 @@ class DynamicModel:
                 )
             # Add Push Forward Data to the plot
             if plot_samples:
-                cols = [f"q_lam_{i}" for i in range(n_states * n_ts)]
+                n_sample_ts = len(df[df['sample_flag']])
+                cols = [f"q_lam_{i}" for i in range(n_states * n_sample_ts)]
                 max_samples = len(self.samples[iteration])
                 to_plot = n_samples if n_samples < max_samples else n_samples
                 rand_idxs = random.choices(range(max_samples), k=to_plot)
@@ -348,10 +350,9 @@ class DynamicModel:
                     sample_df = pd.DataFrame(
                         np.array(
                             [
-                                df["ts"].values,
-                                np.array(sample[1]).reshape(n_ts, n_states)[
-                                    :, state_idx
-                                ],
+                                df['ts'][df['sample_flag']].values,
+                                np.array(sample[1]).reshape(
+                                    (n_sample_ts, n_states))[:, state_idx]
                             ]
                         ).T,
                         columns=["ts", f"q_lam_{state_idx}"],
@@ -372,6 +373,7 @@ class DynamicModel:
                         legend=False,
                         ax=ax,
                         color="purple",
+                        marker="o",
                         data=plot_vals,
                         alpha=0.2,
                         label=label,

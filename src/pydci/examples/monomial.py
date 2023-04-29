@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 class Monomial1D(Model.DynamicModel):
-    
+
     def __init__(self,
                  p,
                  x0=[0, 0], # Note in the constant monomial case, initial state won't matter
@@ -25,7 +25,6 @@ class Monomial1D(Model.DynamicModel):
                          measurement_noise=measurement_noise,
                          **kwargs)
 
-        
     def forward_model(
         self,
         x0,
@@ -45,7 +44,7 @@ class Monomial2D(Model.DynamicModel):
         x0=[0, 0],  # Note in the constant monomial case, initial state won't matter
         lam_true=[0.3, 0.8],
         solve_ts=1.0,
-        sample_ts=1.1,
+        sample_ts=1.0,
         measurement_noise=0.05,
         **kwargs,
     ):
@@ -70,7 +69,8 @@ class Monomial2D(Model.DynamicModel):
 
         Static in time (tim array ignored)
         """
-        res = np.repeat(np.array([[lam[0] ** self.p, lam[1] ** self.p]]), 1, axis=1)
+        res = np.repeat(np.array([[lam[0] ** self.p, lam[1] ** self.p]]),
+                        len(times), axis=0)
         return res
 
     def plot_states(

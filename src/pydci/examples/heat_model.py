@@ -619,7 +619,6 @@ class HeatModel(DynamicModel):
             self.u_n.x.array[:] = self.uh.x.array
 
         return sol
-    domain.sort(axis=1)
 
     def k_x_mud_plot(self,
                      iteration=0,
