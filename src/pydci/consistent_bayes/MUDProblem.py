@@ -155,6 +155,7 @@ class MUDProblem(DCIProblem):
         m = np.argmax(self.state["pi_up"])
         mud_point = get_df(self.state.loc[[m]], "lam", size=self.n_params)
         self.result = put_df(self.result, "lam_MUD", mud_point, size=self.n_params)
+        self.result['MUD_idx'] = m
         self.mud_point = mud_point[0]
         self.mud_arg = m
 

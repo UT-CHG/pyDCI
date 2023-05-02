@@ -168,13 +168,13 @@ class DCIProblem(object):
         )
         self.state = put_df(self.state, "q_lam", self.q_lam, size=self.n_states)
         self.state = put_df(self.state, "lam", self.lam, size=self.n_params)
-        self.set_weights(weights)
         self.dists = {
             "pi_in": pi_in,
             "pi_pr": pi_pr,
             "pi_obs": pi_obs,
             "pi_up": None,
         }
+        self.set_weights(weights)
         self.result = None
 
     def pi_in(self, values=None):
@@ -308,7 +308,7 @@ class DCIProblem(object):
             dimensional, number of columns should match `n_samples`
 
         """
-        if weights is None:
+        if weights is None or len(weights) == 0:
             w = np.ones(self.n_samples)
         else:
             w = np.array(weights)
@@ -322,7 +322,8 @@ class DCIProblem(object):
             # Multiply weights column wise for stacked weights
             w = np.prod(w, axis=0)
 
-        self.state["weight"] = w
+        self.state['weight'] = w
+        self.dists['pi_in'] = None
 
     def solve(self):
         """

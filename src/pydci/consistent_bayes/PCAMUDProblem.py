@@ -250,13 +250,14 @@ class PCAMUDProblem(MUDProblem):
             solution. Any solution more than `exp_thresh` away from 1.0 will
             be deemed as violating the predictability assumption and not valid.
         """
-
         it_results = []
+        weights = []
         for j, pca_mask in enumerate(pca_splits):
             str_val = pca_mask if pca_mask is not None else 'ALL'
             logger.info(f'Using data for pca: {str_val}')
             for i, pca_cs in enumerate(pca_components):
                 logger.info(f'Solving using pca components: {pca_cs}')
+                self.set_weights(weights)
                 self.solve(
                     pca_mask=pca_mask,
                     pca_components=pca_cs,
@@ -269,30 +270,30 @@ class PCAMUDProblem(MUDProblem):
                     state_vals.update(state_extra)
                 self.save_state(state_vals)
                 it_results.append(self.result.copy())
-                it_results[-1]['i'] = i
+                it_results[-1]['i'] = len(it_results) - 1
 
                 if (diff := np.abs(e_r - 1.0)) > exp_thresh:
+                    pdb.set_trace()
                     logger.info(f'|E(r) - 1| = {diff} > {exp_thresh} - Stopping')
                     break
 
                 if i != len(pca_components) - 1:
                     logger.info('Updating weights')
-                    self.state['weight'] = self.state['ratio']
+                    weights.append(self.state['ratio'].values)
                     self.dists["pi_in"] = None
+
+            if (diff := np.abs(e_r - 1.0)) > exp_thresh:
+                pdb.set_trace()
+                logger.info(f'|E(r) - 1| = {diff} > {exp_thresh} - Stopping')
+                break
 
             if j != len(pca_splits) - 1:
                 logger.info('Updating weights')
-                self.state['weight'] = self.state['ratio']
+                weights.append(self.state['ratio'].values)
                 self.dists["pi_in"] = None
 
         self.it_results = pd.concat(it_results)
         self.result = self.it_results.iloc[[-1]]
-
-        # Re-solve Using Best
-        self.solve(
-            pca_mask=eval(self.result['pca_mask'].values[0]),
-            pca_components=eval(self.result['pca_components'].values[0]),
-        )
 
     def solve_search(
         self,
@@ -387,9 +388,99 @@ class PCAMUDProblem(MUDProblem):
         self.all_search_results = pd.concat(all_search_results)
         self.result = res_df[res_df[self.best_method]]
 
+        # Re-solve Using Best
+        self.solve(
+            pca_mask=eval(self.result['pca_mask'].values[0]),
+            pca_components=eval(self.result['pca_components'].values[0]),
+        )
+
+    def solve_seq(
+        self,
+        chunk_size: None,
+        pca_components=[0],
+        exp_thresh: float = 0.1,
+        stop_thresh: float = 0.99,
+        state_extra: dict = None,
+    ):
+        """
+        Sequentially solve problem, suing chunk_sizes. Up to when exp_thresh
+        is violated, and then update from there.
+        """
+        chunk_size = self.n_params if chunk_size is None else chunk_size
+
+        it_results = []
+        weights = []
+        prev_weights = []
+        pca_mask = range(chunk_size)
+        e_r = 1.0
+        best_chunk = None
+        prev_best_chunk = None
+        while max(pca_mask) < self.n_qoi:
+            logger.info(f'Solving for : {pca_mask}, {pca_components}')
+            self.solve(
+                pca_mask=pca_mask,
+                pca_components=pca_components,
+            )
+            e_r = self.result['e_r'].values[0]
+            if np.abs(e_r - 1.0) <= exp_thresh:
+                logger.info(
+                    f'E(r) within thresh, adding {chunk_size} more data.')
+                best_chunk = pca_mask
+                pca_mask = range(min(pca_mask), max(pca_mask) + 1 + chunk_size)
+            if np.abs(e_r - 1.0) <= stop_thresh:
+                logger.info(f'E(r)={e_r} outside of threshold. Reseting to chunk ' +
+                            f'{best_chunk}, updating weights.')
+                # Resolve
+                self.solve(
+                    pca_mask=best_chunk,
+                    pca_components=pca_components,
+                )
+                if prev_best_chunk != best_chunk:
+                    # First time we get to this solution, update and go to next chunk
+                    state_vals = {'iteration': len(it_results),
+                                  'pca_components': str(pca_components),
+                                  'pca_mask': str(best_chunk)}
+                    if state_extra is not None:
+                        state_vals.update(state_extra)
+                    self.save_state(state_vals)
+
+                    # Update weights and next iteration
+                    weights.append(self.state['ratio'].values)
+                    it_results.append(self.result.copy())
+                    it_results[-1]['i'] = len(it_results) - 1
+                    pca_mask = range(max(best_chunk) + 1,
+                                     max(best_chunk) + 1 + chunk_size)
+                    prev_best_chunk = best_chunk
+                    prev_weights = weights
+                    self.set_weights(weights)
+                else:
+                    # Second time we get here, skip chunk
+                    logger.info(f'Skipping chunk {pca_mask}')
+                    pca_mask = range(max(pca_mask) + 1,
+                                     max(pca_mask) + 1 + chunk_size)
+            else:
+                logger.info(f'E(r)={e_r} outside of stop threshold. Setting to last' +
+                            'best and stopping')
+                if prev_best_chunk is not None:
+                    self.set_weights(prev_weights)
+                    self.solve(
+                        pca_mask=prev_best_chunk,
+                        pca_components=pca_components,
+                    )
+                    break
+
+        if len(it_results) < 1:
+            logger.error(f'No estimate for chunk size {chunk_size}.' +
+                         ' Try reducing the chunk_size, decrasing ' +
+                         'number of components, or increasing sample ' +
+                         'size')
+        else:
+            self.it_results = pd.concat(it_results)
+            self.result = self.it_results.iloc[[-1]]
+
     def plot_L(
         self,
-        index=None,
+        iteration=-1,
         lam_true=None,
         mud_point=None,
         df=None,
@@ -431,15 +522,11 @@ class PCAMUDProblem(MUDProblem):
             plotted and (2) List of labels that were plotted, in order plotted.
         """
         if df is None:
-            df_index = self.result.index.values[0]
-            nc = df_index if nc is None else nc
-            mud_point = get_df(self.pca_results.loc[[nc]], "lam_MUD", self.n_params)[0]
-            df = self.state.join(
-                self.pca_states[self.pca_states["nc"] == nc][["ratio"]].add_suffix(
-                    f"_plot"
-                )
-            )
-            ratio_col = "ratio_plot"
+            df = self.state
+        else:
+            df = self.pca_states[self.pca_states['iteration'] == iteration]
+            mud_point = get_df(self.pca_results.loc[iteration],
+                               "lam_MUD", self.n_params)[0]
 
         ax, labels = super().plot_L(
             lam_true=lam_true,
