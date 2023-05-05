@@ -119,13 +119,12 @@ class MUDProblem(DCIProblem):
         std_dev,
         pi_in=None,
         pi_pr=None,
-        weights=None,
     ):
         self.init_prob(
-            samples, data, std_dev, pi_in=pi_in, pi_pr=pi_pr, weights=weights
+            samples, data, std_dev, pi_in=pi_in, pi_pr=pi_pr
         )
 
-    def init_prob(self, samples, data, std_dev, pi_in=None, pi_pr=None, weights=None):
+    def init_prob(self, samples, data, std_dev, pi_in=None, pi_pr=None):
         """
         Initialize problem
 
@@ -139,7 +138,7 @@ class MUDProblem(DCIProblem):
         self.std_dev = std_dev
         self.data = set_shape(np.array(data), (-1, 1))
         pi_obs = dist.norm(loc=np.mean(data), scale=std_dev)
-        super().init_prob(samples, pi_obs, pi_in=pi_in, pi_pr=pi_pr, weights=weights)
+        super().init_prob(samples, pi_obs, pi_in=pi_in, pi_pr=pi_pr)
         self.mud_point = None
 
     def solve(self):

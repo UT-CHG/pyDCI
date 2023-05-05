@@ -53,3 +53,8 @@ MANIFEST
 .venv*/
 .conda*/
 .python-version
+
+# Notebooks figures and data
+notebooks/data/*
+notebooks/figs/*
+notebooks/*.pickle

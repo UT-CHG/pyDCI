@@ -56,7 +56,7 @@ from sklearn.preprocessing import StandardScaler  # type: ignore
 
 from pydci.consistent_bayes.MUDProblem import MUDProblem
 from pydci.log import disable_log, enable_log, log_table, logger
-from pydci.utils import fit_domain, get_df, put_df, set_shape
+from pydci.utils import fit_domain, get_df, put_df, set_shape, KDEError
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -101,15 +101,14 @@ class PCAMUDProblem(MUDProblem):
         data,
         std_dev,
         pi_in=None,
-        weights=None,
     ):
-        self.init_prob(samples, data, std_dev, pi_in=pi_in, weights=weights)
+        self.init_prob(samples, data, std_dev, pi_in=pi_in)
 
     @property
     def n_qoi(self):
         return self.qoi.shape[1]
 
-    def init_prob(self, samples, data, std_dev, pi_in=None, weights=None):
+    def init_prob(self, samples, data, std_dev, pi_in=None):
         """
         Initialize problem
 
@@ -121,7 +120,7 @@ class PCAMUDProblem(MUDProblem):
         """
         # Assume gaussian error around mean of data with assumed noise
         super().init_prob(
-            samples, data, std_dev, pi_in=pi_in, pi_pr=None, weights=weights
+            samples, data, std_dev, pi_in=pi_in, pi_pr=None,
         )
         self.qoi = self.q_lam
         self.pca_states = None
@@ -203,21 +202,18 @@ class PCAMUDProblem(MUDProblem):
         self.dists["pi_pr"] = None
         try:
             super().solve()
-        except ValueError as v:
-            if "array must not contain infs or NaNs" in str(v):
-                logger.error(f"Solve with {pca_components} components failed")
-            else:
-                raise v
-        except LinAlgError as le:
-            if "data appears to lie in a lower-dimensional" in str(le):
-                logger.error(f"GKDE failed using {pca_components} components")
-                var = [self.pca['var'][x] for x in pca_components]
-                logger.error(f"Variance: {var}")
-            else:
-                raise le
-        self.result['pca_components'] = str(pca_components)
-        self.result['pca_mask'] = str(pca_mask)
-        self.q_lam = all_qoi
+        except ZeroDivisionError as z:
+            logger.exception(f"({pca_mask}: {pca_components}): " +
+                             "Predictabiltiy assumption violated")
+            raise z
+        except KDEError as k:
+            logger.exception(f"({pca_mask}: {pca_components}): " +
+                             "Unable to perform kernel density estimates")
+            raise k
+        else:
+            self.result['pca_components'] = str(pca_components)
+            self.result['pca_mask'] = str(pca_mask)
+            self.q_lam = all_qoi
 
     def solve_it(
         self,
@@ -252,17 +248,48 @@ class PCAMUDProblem(MUDProblem):
         """
         it_results = []
         weights = []
-        for j, pca_mask in enumerate(pca_splits):
+        failed = False
+        iterations = [(i, j) for i in pca_splits for j in pca_components]
+        for i, (pca_mask, pca_cs) in enumerate(iterations):
             str_val = pca_mask if pca_mask is not None else 'ALL'
-            logger.info(f'Using data for pca: {str_val}')
-            for i, pca_cs in enumerate(pca_components):
-                logger.info(f'Solving using pca components: {pca_cs}')
-                self.set_weights(weights)
+            logger.info(f'Solving using ({str_val}, {pca_cs})')
+            self.set_weights(weights)
+            try:
                 self.solve(
                     pca_mask=pca_mask,
                     pca_components=pca_cs,
                 )
+            except ZeroDivisionError as z:
+                if i == 0:
+                    z.msg = 'Pred assumption failed on first iteration.'
+                    raise z
+                else:
+                    logger.info(
+                        f"({i}): pred assumption failed - str({z})")
+                    failed = True
+            except KDEError as k:
+                if i == 0:
+                    k.msg = 'Failed to estiamte KDEs on first iteration.'
+                    raise k
+                else:
+                    logger.info(
+                        f"({i}): KDE estimation failed - str({k})")
+                    failed = True
+            else:
                 e_r = self.result['e_r'].values[0]
+                if (diff := np.abs(e_r - 1.0)) > exp_thresh or failed:
+                    logger.info(f'|E(r) - 1| = {diff} > {exp_thresh} - Stopping')
+                    failed = True
+
+            if failed:
+                logger.info(f'Resetting to last solution at {iterations[i-1]}')
+                self.set_weights(weights[:-1])
+                self.solve(
+                    pca_mask=iterations[i-1][0],
+                    pca_components=iterations[i-1][1],
+                )
+                break
+            else:
                 state_vals = {'iteration': len(it_results),
                               'pca_components': str(pca_cs),
                               'pca_mask': str(pca_mask)}
@@ -271,26 +298,9 @@ class PCAMUDProblem(MUDProblem):
                 self.save_state(state_vals)
                 it_results.append(self.result.copy())
                 it_results[-1]['i'] = len(it_results) - 1
-
-                if (diff := np.abs(e_r - 1.0)) > exp_thresh:
-                    pdb.set_trace()
-                    logger.info(f'|E(r) - 1| = {diff} > {exp_thresh} - Stopping')
-                    break
-
-                if i != len(pca_components) - 1:
+                if i != len(iterations) - 1:
                     logger.info('Updating weights')
                     weights.append(self.state['ratio'].values)
-                    self.dists["pi_in"] = None
-
-            if (diff := np.abs(e_r - 1.0)) > exp_thresh:
-                pdb.set_trace()
-                logger.info(f'|E(r) - 1| = {diff} > {exp_thresh} - Stopping')
-                break
-
-            if j != len(pca_splits) - 1:
-                logger.info('Updating weights')
-                weights.append(self.state['ratio'].values)
-                self.dists["pi_in"] = None
 
         self.it_results = pd.concat(it_results)
         self.result = self.it_results.iloc[[-1]]
@@ -393,90 +403,6 @@ class PCAMUDProblem(MUDProblem):
             pca_mask=eval(self.result['pca_mask'].values[0]),
             pca_components=eval(self.result['pca_components'].values[0]),
         )
-
-    def solve_seq(
-        self,
-        chunk_size: None,
-        pca_components=[0],
-        exp_thresh: float = 0.1,
-        stop_thresh: float = 0.99,
-        state_extra: dict = None,
-    ):
-        """
-        Sequentially solve problem, suing chunk_sizes. Up to when exp_thresh
-        is violated, and then update from there.
-        """
-        chunk_size = self.n_params if chunk_size is None else chunk_size
-
-        it_results = []
-        weights = []
-        prev_weights = []
-        pca_mask = range(chunk_size)
-        e_r = 1.0
-        best_chunk = None
-        prev_best_chunk = None
-        while max(pca_mask) < self.n_qoi:
-            logger.info(f'Solving for : {pca_mask}, {pca_components}')
-            self.solve(
-                pca_mask=pca_mask,
-                pca_components=pca_components,
-            )
-            e_r = self.result['e_r'].values[0]
-            if np.abs(e_r - 1.0) <= exp_thresh:
-                logger.info(
-                    f'E(r) within thresh, adding {chunk_size} more data.')
-                best_chunk = pca_mask
-                pca_mask = range(min(pca_mask), max(pca_mask) + 1 + chunk_size)
-            if np.abs(e_r - 1.0) <= stop_thresh:
-                logger.info(f'E(r)={e_r} outside of threshold. Reseting to chunk ' +
-                            f'{best_chunk}, updating weights.')
-                # Resolve
-                self.solve(
-                    pca_mask=best_chunk,
-                    pca_components=pca_components,
-                )
-                if prev_best_chunk != best_chunk:
-                    # First time we get to this solution, update and go to next chunk
-                    state_vals = {'iteration': len(it_results),
-                                  'pca_components': str(pca_components),
-                                  'pca_mask': str(best_chunk)}
-                    if state_extra is not None:
-                        state_vals.update(state_extra)
-                    self.save_state(state_vals)
-
-                    # Update weights and next iteration
-                    weights.append(self.state['ratio'].values)
-                    it_results.append(self.result.copy())
-                    it_results[-1]['i'] = len(it_results) - 1
-                    pca_mask = range(max(best_chunk) + 1,
-                                     max(best_chunk) + 1 + chunk_size)
-                    prev_best_chunk = best_chunk
-                    prev_weights = weights
-                    self.set_weights(weights)
-                else:
-                    # Second time we get here, skip chunk
-                    logger.info(f'Skipping chunk {pca_mask}')
-                    pca_mask = range(max(pca_mask) + 1,
-                                     max(pca_mask) + 1 + chunk_size)
-            else:
-                logger.info(f'E(r)={e_r} outside of stop threshold. Setting to last' +
-                            'best and stopping')
-                if prev_best_chunk is not None:
-                    self.set_weights(prev_weights)
-                    self.solve(
-                        pca_mask=prev_best_chunk,
-                        pca_components=pca_components,
-                    )
-                    break
-
-        if len(it_results) < 1:
-            logger.error(f'No estimate for chunk size {chunk_size}.' +
-                         ' Try reducing the chunk_size, decrasing ' +
-                         'number of components, or increasing sample ' +
-                         'size')
-        else:
-            self.it_results = pd.concat(it_results)
-            self.result = self.it_results.iloc[[-1]]
 
     def plot_L(
         self,
