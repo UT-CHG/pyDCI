@@ -3,6 +3,7 @@ Lotka-Volterra (Predator-Prey) System
 """
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 from scipy.integrate import odeint
 
 from pydci.Model import DynamicModel
@@ -67,6 +68,7 @@ class LotkaVolterraModel(DynamicModel):
     """
     Lotka-Volterra Predator Prey model
     """
+
     def __init__(
         self,
         x0=[100, 10],
@@ -109,6 +111,89 @@ class LotkaVolterraModel(DynamicModel):
         for i, ax in enumerate(ax.flat):
             self.plot_state(state_idx=i, ax=ax)
             ax.set_title(f"{i}: {title[i]} Temporal Evolution")
+
+    def plot_true_phase_space(
+        self,
+        n_ints: int = 1,
+        int_size: int = None,
+        ax: plt.Axes = None,
+    ):
+        """
+        Plot true phase space of prey to predator.
+
+        Parameters
+        ----------
+        n_ints : int, optional
+            Number of intervals to seperate data into, by default 1, or all the data.
+        int_size : int
+            Size of intervals, by default None, or all the data.
+        ax : plt.Axes, optional
+            Matplotlib axes to plot on, by default None, or create new axes.
+
+        Returns
+        -------
+        plt.Axes
+            Matplotlib axes with plot.
+        """
+
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=(7, 7))
+
+        start = 0
+        int_size = len(self.data[0]) if int_size is None else int_size
+        cols = [c for c in self.data[0].columns if c.startswith("q_lam_true")]
+        for n in np.arange(int_size, (1 + n_ints) * int_size, int_size):
+            ax = sns.scatterplot(
+                self.data[0].loc[list(range(start, n))][cols],
+                x="q_lam_true_0",
+                y="q_lam_true_1",
+                ax=ax,
+            )
+            start = n
+
+        return ax
+
+    def plot_obs_phase_space(
+        self,
+        n_ints: int = 1,
+        int_size: int = None,
+        ax: plt.Axes = None,
+    ):
+        """
+        Plot observed phase space of prey to predator, with error included.
+
+        Parameters
+        ----------
+        n_ints : int, optional
+            Number of intervals to seperate data into, by default 1, or all the data.
+        int_size : int
+            Size of intervals, by default None, or all the data.
+        ax : plt.Axes, optional
+            Matplotlib axes to plot on, by default None, or create new axes.
+
+        Returns
+        -------
+        plt.Axes
+            Matplotlib axes with plot.
+        """
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=(7, 7))
+
+        start = 0
+        int_size = len(self.data[0]) if int_size is None else int_size
+        obs_cols = [c for c in self.data[0].columns if c.startswith("q_lam_obs")]
+        for n in np.arange(int_size, (1 + n_ints) * int_size, int_size):
+            ax = sns.scatterplot(
+                self.data[0].dropna().iloc[list(range(start, n))][obs_cols],
+                x="q_lam_obs_0",
+                y="q_lam_obs_1",
+                marker="x",
+                linewidth=2,
+                ax=ax,
+            )
+            start = n
+
+        return ax
 
 
 # TODO: Workout seeds -> Put ones to save in dictionaries

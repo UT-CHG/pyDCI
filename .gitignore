@@ -58,3 +58,4 @@ MANIFEST
 notebooks/data/*
 notebooks/figs/*
 notebooks/*.pickle
+notebooks/*/*.pickle

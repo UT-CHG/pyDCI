@@ -25,19 +25,12 @@ Dawson, “Parameter estimation with maximal updated densities,” Computer
 Methods in Applied Mechanics and Engineering, vol. 407, p. 115906, Mar.
 2023, doi: 10.1016/j.cma.2023.115906.
 
-TODO List:
-
-    - Mud point for inherited classes not being plotted correctly
-    - Sequential (should be renamed split sequential?) - Plot distribution
-    methods for plotting distributions per iteration, qoi combinations,
-    or pca values
-    Dynamic Problem -> Finish
-
 """
 from typing import Callable, List, Optional, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import seaborn as sns
 from scipy.stats import distributions as dist  # type: ignore
 
@@ -120,9 +113,7 @@ class MUDProblem(DCIProblem):
         pi_in=None,
         pi_pr=None,
     ):
-        self.init_prob(
-            samples, data, std_dev, pi_in=pi_in, pi_pr=pi_pr
-        )
+        self.init_prob(samples, data, std_dev, pi_in=pi_in, pi_pr=pi_pr)
 
     def init_prob(self, samples, data, std_dev, pi_in=None, pi_pr=None):
         """
@@ -130,12 +121,19 @@ class MUDProblem(DCIProblem):
 
         Initialize problem by setting the lambda samples, the values of the
         samples pushed through the forward map, and the observe distribution
-        on the data. Can optionally as well set the initial and predicteed
+        on the data. Can optionally as well set the initial and predicted
         distributions explicitly, and pass in weights to incorporate prior
         beliefs on the `lam` sample sets.
         """
         # Assume gaussian error around mean of data with assumed noise
         self.std_dev = std_dev
+        if isinstance(data, pd.DataFrame):
+            # Compute n_states because self.n_states won't be set until super().init_prob called
+            data = get_df(
+                data,
+                "q_lam_obs",
+                size=len([c for c in data.columns if c.startswith("q_lam_obs")]),
+            )
         self.data = set_shape(np.array(data), (-1, 1))
         pi_obs = dist.norm(loc=np.mean(data), scale=std_dev)
         super().init_prob(samples, pi_obs, pi_in=pi_in, pi_pr=pi_pr)
@@ -154,7 +152,7 @@ class MUDProblem(DCIProblem):
         m = np.argmax(self.state["pi_up"])
         mud_point = get_df(self.state.loc[[m]], "lam", size=self.n_params)
         self.result = put_df(self.result, "lam_MUD", mud_point, size=self.n_params)
-        self.result['MUD_idx'] = m
+        self.result["MUD_idx"] = m
         self.mud_point = mud_point[0]
         self.mud_arg = m
 

@@ -1,29 +1,32 @@
 import importlib
-
-from pydci import Model
-
 import pdb
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-class Monomial1D(Model.DynamicModel):
+from pydci import Model
 
-    def __init__(self,
-                 p,
-                 x0=[0, 0], # Note in the constant monomial case, initial state won't matter
-                 lam_true=[0.75],
-                 solve_ts=1.0,
-                 sample_ts=1.1,
-                 measurement_noise=0.1,
-                 **kwargs
-                ):
+
+class Monomial1D(Model.DynamicModel):
+    def __init__(
+        self,
+        p,
+        x0=[0, 0],  # Note in the constant monomial case, initial state won't matter
+        lam_true=[0.75],
+        solve_ts=1.0,
+        sample_ts=1.1,
+        measurement_noise=0.1,
+        **kwargs,
+    ):
         self.p = p
-        super().__init__(x0, lam_true,
-                         solve_ts=solve_ts,
-                         sample_ts=sample_ts,
-                         measurement_noise=measurement_noise,
-                         **kwargs)
+        super().__init__(
+            x0,
+            lam_true,
+            solve_ts=solve_ts,
+            sample_ts=sample_ts,
+            measurement_noise=measurement_noise,
+            **kwargs,
+        )
 
     def forward_model(
         self,
@@ -34,7 +37,7 @@ class Monomial1D(Model.DynamicModel):
         """
         Monomial Forward Model
         """
-        return np.array([[lam[0]**self.p]])
+        return np.array([[lam[0] ** self.p]])
 
 
 class Monomial2D(Model.DynamicModel):
@@ -69,8 +72,9 @@ class Monomial2D(Model.DynamicModel):
 
         Static in time (tim array ignored)
         """
-        res = np.repeat(np.array([[lam[0] ** self.p, lam[1] ** self.p]]),
-                        len(times), axis=0)
+        res = np.repeat(
+            np.array([[lam[0] ** self.p, lam[1] ** self.p]]), len(times), axis=0
+        )
         return res
 
     def plot_states(

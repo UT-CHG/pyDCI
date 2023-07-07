@@ -24,14 +24,6 @@ and Bayes’ Rule to Construct Consistent Solutions to Stochastic Inverse
 Problems,” SIAM J. Sci. Comput., vol. 40, no. 2, pp. A984–A1011, Jan. 2018,
 doi: 10.1137/16M1087229.
 
-TODO List:
-
-    - Mud point for inherited classes not being plotted correctly
-    - Sequential (should be renamed split sequential?) - Plot distribution
-    methods for plotting distributions per iteration, qoi combinations,
-    or pca values
-    Dynamic Problem -> Finish
-
 """
 import itertools
 import pdb
@@ -45,14 +37,13 @@ import seaborn as sns
 from numpy.typing import ArrayLike
 from rich.table import Table
 from scipy.stats import rv_continuous  # type: ignore
-from scipy.stats import entropy
-from scipy.stats import gaussian_kde
+from scipy.stats import entropy, gaussian_kde
 from scipy.stats.distributions import norm
 from sklearn.decomposition import PCA  # type: ignore
 from sklearn.preprocessing import StandardScaler  # type: ignore
 
 from pydci.log import disable_log, enable_log, log_table, logger
-from pydci.utils import fit_domain, get_df, put_df, set_shape, gkde, KDEError
+from pydci.utils import KDEError, fit_domain, get_df, gkde, put_df, set_shape
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -164,7 +155,7 @@ class DCIProblem(object):
             np.zeros((self.n_samples, 6)),
             columns=["weight", "pi_in", "pi_pr", "pi_obs", "ratio", "pi_up"],
         )
-        self.state['weight'] = 1.0
+        self.state["weight"] = 1.0
         self.state = put_df(self.state, "q_lam", self.q_lam, size=self.n_states)
         self.state = put_df(self.state, "lam", self.lam, size=self.n_params)
         self.dists = {
@@ -187,11 +178,13 @@ class DCIProblem(object):
         if self.dists["pi_in"] is None:
             logger.info("Calculating pi_in by computing KDE on lam")
             try:
-                self.dists["pi_in"] = gkde(self.lam.T,
-                                           weights=self.state["weight"],
-                                           label='Initial Distribution')
+                self.dists["pi_in"] = gkde(
+                    self.lam.T,
+                    weights=self.state["weight"],
+                    label="Initial Distribution",
+                )
             except KDEError as k:
-                k.msg = 'KDE failed on initial samples'
+                k.msg = "KDE failed on initial samples"
                 raise k
         values = self.lam if values is None else values
         if isinstance(self.dists["pi_in"], gaussian_kde):
@@ -211,11 +204,13 @@ class DCIProblem(object):
         if self.dists["pi_pr"] is None:
             logger.info("Calculating pi_pr by computing KDE on q_lam")
             try:
-                self.dists["pi_pr"] = gkde(self.q_lam.T,
-                                           weights=self.state["weight"],
-                                           label='Predicted Distribution')
+                self.dists["pi_pr"] = gkde(
+                    self.q_lam.T,
+                    weights=self.state["weight"],
+                    label="Predicted Distribution",
+                )
             except KDEError as k:
-                k.msg = 'KDE failed on observations'
+                k.msg = "KDE failed on observations"
                 raise k
         values = self.q_lam if values is None else values
         if isinstance(self.dists["pi_pr"], gaussian_kde):
@@ -250,10 +245,10 @@ class DCIProblem(object):
                 self.dists["pi_up"] = gkde(
                     self.lam.T,
                     weights=self.state["ratio"] * self.state["weight"],
-                    label="Updated Distribution"
+                    label="Updated Distribution",
                 )
             except KDEError as k:
-                k.msg = 'KDE failed on updated samples'
+                k.msg = "KDE failed on updated samples"
                 raise k
         values = self.lam if values is None else values
         return self.dists["pi_up"].pdf(values.T).T
@@ -273,10 +268,10 @@ class DCIProblem(object):
                 self.dists["pi_pf"] = gkde(
                     self.q_lam.T,
                     weights=self.state["ratio"] * self.state["weight"],
-                    label="Push-Forward of Updated Distribution"
+                    label="Push-Forward of Updated Distribution",
                 )
             except KDEError as k:
-                k.msg = 'KDE failed on updated observations'
+                k.msg = "KDE failed on updated observations"
                 raise k
         values = self.q_lam if values is None else values
         return self.dists["pi_pf"].pdf(values.T).T
@@ -350,11 +345,11 @@ class DCIProblem(object):
             # Multiply weights column wise for stacked weights
             w = np.prod(w, axis=0)
 
-        self.state['weight'] = w
-        self.dists['pi_in'] = None
-        self.dists['pi_pr'] = None
-        self.dists['pi_up'] = None
-        self.dists['pi_pf'] = None
+        self.state["weight"] = w
+        self.dists["pi_in"] = None
+        self.dists["pi_pr"] = None
+        self.dists["pi_up"] = None
+        self.dists["pi_pf"] = None
 
     def solve(self):
         """
@@ -380,13 +375,13 @@ class DCIProblem(object):
         self.state["pi_obs"] = self.pi_obs()
         pi_pr = self.pi_pr()
         self.state["pi_pr"] = pi_pr
-        self.state["ratio"] = np.divide(self.state["pi_obs"],
-                                        self.state["pi_pr"])
-        update = np.multiply(self.state['ratio'], self.state['weight'])
+        self.state["ratio"] = np.divide(self.state["pi_obs"], self.state["pi_pr"])
+        update = np.multiply(self.state["ratio"], self.state["weight"])
         if len(bad := np.where(~np.isfinite(update))[0]) > 0:
             raise ZeroDivisionError(
-                f'Predictability assumption violated for samples {len(bad)}/' +
-                f'{self.n_samples} samples.')
+                f"Predictability assumption violated for samples {len(bad)}/"
+                + f"{self.n_samples} samples."
+            )
         self.state["pi_up"] = np.multiply(self.state["pi_in"], update)
 
         # Store result into result dataframe
@@ -750,13 +745,13 @@ class DCIProblem(object):
 # class MUDProblem(DCIProblem):
 #     """
 #     Maximal Updated Density Problem
-# 
+#
 #     Maxmal Update Density Inverse problem class for parameter identification.
 #     This extends the DCIProblem class by computing the Maximal Updated Density,
 #     or MUD, point, as the parameter sample that maximizes the updated
 #     distribution in order to solve a parmater estimation problem, as first
 #     proposed in [1].
-# 
+#
 #     The key distinction is the assumptions being made in the data between a
 #     parameter estimation problem and a general Data Consistent Inversion
 #     problem. In a MUDProblem, we assume that the source of the error in the
@@ -768,9 +763,9 @@ class DCIProblem(object):
 #     quantifying the probability distribution of the parameter itself, the
 #     solution is a point that maximizes the distribution, and not the
 #     distribution itself.
-# 
+#
 #     This class extends the DCIProblem class in the following ways:
-# 
+#
 #         1. Initialization - Instead of receiving an observed distribution on
 #         data as the input, the observed data itself should be passed, along
 #         with the standard deviation associated with the i.i.d. Gaussian noise
@@ -784,12 +779,12 @@ class DCIProblem(object):
 #         these values.
 #         3. Plotting - Plots add vertical lines for MUD points on the parameter
 #         distribution plots, and options for plotting the true value if known.
-# 
+#
 #     Note: this class does no data-aggregation using data-constructed QoI maps
 #     as proposed in [1] for parameter estimation. See sub-classes `WMEMUDProblem`
 #     and `PCAMUDProblem` for classes that use data-constructed QoI maps for
 #     parameter estimation.
-# 
+#
 #     Attributes
 #     ----------
 #     data : ArrayLike
@@ -797,7 +792,7 @@ class DCIProblem(object):
 #         states for each passsed in sample, `q_lam`.
 #     std_dev : float
 #         Assumed measurement noise in collecting the data.
-# 
+#
 #     References
 #     ----------
 #     [1] M. Pilosov, C. del-Castillo-Negrete, T. Y. Yen, T. Butler, and C.
@@ -805,7 +800,7 @@ class DCIProblem(object):
 #     Methods in Applied Mechanics and Engineering, vol. 407, p. 115906, Mar.
 #     2023, doi: 10.1016/j.cma.2023.115906.
 #     """
-# 
+#
 #     def __init__(
 #         self,
 #         samples,
@@ -818,11 +813,11 @@ class DCIProblem(object):
 #         self.init_prob(
 #             samples, data, std_dev, pi_in=pi_in, pi_pr=pi_pr, weights=weights
 #         )
-# 
+#
 #     def init_prob(self, samples, data, std_dev, pi_in=None, pi_pr=None, weights=None):
 #         """
 #         Initialize problem
-# 
+#
 #         Initialize problem by setting the lambda samples, the values of the
 #         samples pushed through the forward map, and the observe distribution
 #         on the data. Can optionally as well set the initial and predicteed
@@ -835,11 +830,11 @@ class DCIProblem(object):
 #         pi_obs = dist.norm(loc=np.mean(data), scale=std_dev)
 #         super().init_prob(samples, pi_obs, pi_in=pi_in, pi_pr=pi_pr, weights=weights)
 #         self.mud_point = None
-# 
+#
 #     def solve(self):
 #         """
 #         Solve MUD Parameter Estimation Problem
-# 
+#
 #         Extends the parent method by computing the MUD point, the solution
 #         to the parameter estimation problem, as the samples that maximizes the
 #         `pi_up` column in the state DataFrame. This MUD Point is stored in the
@@ -851,7 +846,7 @@ class DCIProblem(object):
 #         self.result = put_df(self.result, "lam_MUD", mud_point, size=self.n_params)
 #         self.mud_point = mud_point[0]
 #         self.mud_arg = m
-# 
+#
 #     def plot_L(
 #         self,
 #         lam_true=None,
@@ -868,13 +863,13 @@ class DCIProblem(object):
 #     ):
 #         """
 #         Plot Lambda Space Distributions
-# 
+#
 #         Plot distributions over parameter space. This includes the initial and
 #         the updated distributions. Extends `DCIProblem` methods by adding a
 #         vertical line for the MUD point and an optional line for the true
 #         solution if passed in. See documentation for `DCIProblem.plot_L` for
 #         more info on additional arguments
-# 
+#
 #         Parameters
 #         ----------
 #         param_idx : int, default=0
@@ -886,7 +881,7 @@ class DCIProblem(object):
 #             specified is only used.
 #         plot_mud: bool, default=True
 #             Whether to add a vertical line for the computed MUD point solution.
-# 
+#
 #         Returns
 #         -------
 #         ax, labels : Tuple
@@ -904,7 +899,7 @@ class DCIProblem(object):
 #             ax=ax,
 #             figsize=figsize,
 #         )
-# 
+#
 #         # Generate vertical lines for true values
 #         if lam_true is not None:
 #             lam_true_label = (
@@ -918,7 +913,7 @@ class DCIProblem(object):
 #                 label=lam_true_label,
 #             )
 #             labels.append(lam_true_label)
-# 
+#
 #         mud_point = self.mud_point if mud_point is None else mud_point
 #         mud_label = f"$\lambda^{{MUD}}_{param_idx} = " + f"{mud_point[param_idx]:.4f}$"
 #         ax.axvline(
@@ -929,16 +924,16 @@ class DCIProblem(object):
 #             label=mud_label,
 #         )
 #         labels.append(mud_label)
-# 
+#
 #         if plot_legend:
 #             ax.legend(
 #                 labels=labels,
 #                 fontsize=12,
 #                 title_fontsize=12,
 #             )
-# 
+#
 #         return ax, labels
-# 
+#
 #     def density_plots(
 #         self,
 #         lam_true=None,
@@ -959,9 +954,9 @@ class DCIProblem(object):
 #         lam_true = lam_kwargs.get("lam_true", None)
 #         fig.suptitle(self._parse_title(lam_true=lam_true))
 #         fig.tight_layout()
-# 
+#
 #         return axs
-# 
+#
 #     def _parse_title(
 #         self,
 #         result=None,
@@ -969,7 +964,7 @@ class DCIProblem(object):
 #     ):
 #         """
 #         Parse title for plots
-# 
+#
 #         Extends DCIProblem _parse title by adding MUD point.
 #         Note sets result to parse title for to result set by class if none
 #         passed by call (for calls from sub-classes).
@@ -984,14 +979,14 @@ class DCIProblem(object):
 #                 + f" = {l2_err:.3f},  "
 #                 + title
 #             )
-# 
+#
 #         return title
-# 
-# 
+#
+#
 # class PCAMUDProblem(MUDProblem):
 #     """
 #     PCA MUD Problem
-# 
+#
 #     Sets up a Maximal Updated Density (MUD) parameter estimation using the
 #     `q_pca` map to aggregate data as proposed in [1]. The `q_pca` map is a way
 #     of aggregating observed data with simulated data for parameter estimation
@@ -999,24 +994,24 @@ class DCIProblem(object):
 #     on a map of aggregated data instead of the map that produced the data
 #     itself, the variance in the MUD parameter estimate can be reduced as more
 #     data is incorporated.
-# 
+#
 #     This class extends the MUDProblem class by using the `q_pca()` function
 #     before solving the parameter estimation problem to aggregate data and invert
 #     on the data-constructed map instead.
-# 
+#
 #     Attributes
 #     ----------
 #     pca_res : List[pd.DataFrame]
-# 
+#
 #     Methods
 #     -------
 #     solve(pca_mask=None, max_nc=None, best_method="closest", exp_thresh=0.5)
 #         Solve the parameter estimation problem, with the parameters relevant
 #         to aggregating the data into the `q_pca()` map and determing how many
 #         principal components to use for optimal solution.
-# 
+#
 #     """
-# 
+#
 #     def __init__(
 #         self,
 #         samples,
@@ -1026,15 +1021,15 @@ class DCIProblem(object):
 #         weights=None,
 #     ):
 #         self.init_prob(samples, data, std_dev, pi_in=pi_in, weights=weights)
-# 
+#
 #     @property
 #     def n_qoi(self):
 #         return self.qoi.shape[1]
-# 
+#
 #     def init_prob(self, samples, data, std_dev, pi_in=None, weights=None):
 #         """
 #         Initialize problem
-# 
+#
 #         Initialize problem by setting the lambda samples, the values of the
 #         samples pushed through the forward map, and the observe distribution
 #         on the data. Can optionally as well set the initial and predicteed
@@ -1048,18 +1043,18 @@ class DCIProblem(object):
 #         self.qoi = self.q_lam
 #         self.pca_states = None
 #         self.pca_results = None
-# 
+#
 #     def q_pca(self, mask=None, max_nc=None):
 #         """
 #         Build QoI Map Using Data and Measurements
-# 
+#
 #         Aggregate q_lam data with observed data for MUD convergence.
 #         """
 #         mask = np.arange(self.n_qoi) if mask is None else mask
 #         residuals = np.subtract(self.data[mask].T, self.qoi[:, mask]) / self.std_dev
 #         if max_nc is None:
 #             max_nc = self.n_params if self.n_params < len(mask) else len(mask)
-# 
+#
 #         # Standarize and perform linear PCA
 #         sc = StandardScaler()
 #         pca = PCA(n_components=max_nc)
@@ -1069,11 +1064,11 @@ class DCIProblem(object):
 #             "vecs": pca.components_,
 #             "var": pca.explained_variance_,
 #         }
-# 
+#
 #         # Compute Q_PCA
 #         self.q_lam = residuals @ pca.components_.T
 #         self.state = put_df(self.state, "q_pca", self.q_lam, size=max_nc)
-# 
+#
 #     def solve(
 #         self,
 #         pca_mask: List[int] = None,
@@ -1083,11 +1078,11 @@ class DCIProblem(object):
 #     ):
 #         """
 #         Solve the parameter estimation problem
-# 
+#
 #         This extends the `MUDProblem` solution class by using the `q_pca()` map
 #         to aggregate data between the observed and predicted values and
 #         determine the best MUD estimate that fits the data.
-# 
+#
 #         Parameters
 #         ----------
 #         pca_mask: List[int], default=None
@@ -1122,7 +1117,7 @@ class DCIProblem(object):
 #             raise ValueError(msg)
 #         self.exp_thresh = exp_thresh
 #         self.best_method = best_method
-# 
+#
 #         self.q_pca(mask=pca_mask, max_nc=max_nc)
 #         all_qoi = self.q_lam
 #         results_cols = (
@@ -1156,7 +1151,7 @@ class DCIProblem(object):
 #                 pca_state[["nc", "weight", "pi_obs", "pi_pr", "ratio", "pi_up"]]
 #             )
 #             dists.append(self.dists)
-# 
+#
 #         # Parse DataFrame with results of mud estimations for each ts choice
 #         res_df = pd.concat(results)  # , keys=nc_list, names=['nc'])
 #         res_df["predict_delta"] = np.abs(res_df["e_r"] - 1.0)
@@ -1183,7 +1178,7 @@ class DCIProblem(object):
 #         self.pca_states = pd.concat(pca_states, axis=0)
 #         self.pca_results = res_df
 #         self.result = res_df.loc[[best_nc]]
-# 
+#
 #     def plot_L(
 #         self,
 #         nc=None,
@@ -1201,14 +1196,14 @@ class DCIProblem(object):
 #     ):
 #         """
 #         Plot Lambda Space Distributions
-# 
+#
 #         Plot distributions over parameter space. This includes the initial and
 #         the updated distributions. Extends `MUDProblem` methods by allowing
 #         an `nc` argument to plot the solutions that use only `nc` number of
 #         principal components in the `q_pca` map. If `nc` is not specified, the
 #         best choice of `nc` will be picked from those tried, with the best
 #         being chosen according to the `best_method` set in `solve()`.
-# 
+#
 #         Parameters
 #         ----------
 #         param_idx : int, default=0
@@ -1220,7 +1215,7 @@ class DCIProblem(object):
 #             specified is only used.
 #         plot_mud: bool, default=True
 #             Whether to add a vertical line for the computed MUD point solution.
-# 
+#
 #         Returns
 #         -------
 #         ax, labels : Tuple
@@ -1237,7 +1232,7 @@ class DCIProblem(object):
 #                 )
 #             )
 #             ratio_col = "ratio_plot"
-# 
+#
 #         ax, labels = super().plot_L(
 #             lam_true=lam_true,
 #             mud_point=mud_point,
@@ -1251,9 +1246,9 @@ class DCIProblem(object):
 #             ax=ax,
 #             figsize=figsize,
 #         )
-# 
+#
 #         return ax, labels
-# 
+#
 #     def plot_D(
 #         self,
 #         nc=None,
@@ -1270,7 +1265,7 @@ class DCIProblem(object):
 #     ):
 #         """
 #         Plot Q(lambda) Space Distributions
-# 
+#
 #         Plot distributions over observable space `q_lam`. This includes the
 #         observed distribution `pi_obs`, the predicted distribtuion `pi_pr`, and
 #         the push-forward of the updated distribution `pi_pf`. Extends
@@ -1281,14 +1276,14 @@ class DCIProblem(object):
 #         set in `solve()` (and corresponding to the solution stored in the
 #         `result` class attribute). See parent class for more info on relevant
 #         parameters.
-# 
+#
 #         Parameters
 #         ----------
 #         nc: int, default=None
 #             Plot solution that only uses `nc` components. By default will plot
 #             the solution that corresponds to the best as determined in the
 #             `solve()` method and stored in the `result` attribute.
-# 
+#
 #         Returns
 #         -------
 #         ax, labels : Tuple
@@ -1320,9 +1315,9 @@ class DCIProblem(object):
 #             ax=ax,
 #             figsize=figsize,
 #         )
-# 
+#
 #         return ax, labels
-# 
+#
 #     def density_plots(
 #         self,
 #         idx=None,
@@ -1351,9 +1346,9 @@ class DCIProblem(object):
 #             )
 #         )
 #         fig.tight_layout()
-# 
+#
 #         return axs
-# 
+#
 #     def param_density_plots(
 #         self,
 #         nc=None,
@@ -1369,12 +1364,12 @@ class DCIProblem(object):
 #             grid_plot[1],
 #             figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
 #         )
-# 
+#
 #         lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
 #         for i, ax in enumerate(ax.flat):
 #             self.plot_L(nc=nc, param_idx=i, lam_true=lam_true, ax=ax)
 #             ax.set_title(f"$\lambda_{i}$")
-# 
+#
 #         fig.suptitle(
 #             self._parse_title(
 #                 result=self.result if nc is None else self.pca_results.loc[[nc]],
@@ -1383,7 +1378,7 @@ class DCIProblem(object):
 #             )
 #         )
 #         fig.tight_layout()
-# 
+#
 #     def nc_param_density_plots(
 #         self,
 #         nc_mask=None,
@@ -1403,16 +1398,16 @@ class DCIProblem(object):
 #             grid_plot[1],
 #             figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
 #         )
-# 
+#
 #         lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
 #         for i, ax in enumerate(ax.flat):
 #             self.plot_L(nc=nc_mask[i], param_idx=param_idx, lam_true=lam_true, ax=ax)
 #             result = self.pca_results.loc[[nc_mask[i]]]
 #             ax.set_title(self._parse_title(result=result, lam_true=lam_true, nc=True))
-# 
+#
 #         fig.suptitle("MUD Estimates by Number of PCA Components Used")
 #         fig.tight_layout()
-# 
+#
 #     def learned_qoi_plot(self, nc_mask=None):
 #         """
 #         Scatter plots of learned `q_pca` components.
@@ -1424,7 +1419,7 @@ class DCIProblem(object):
 #         g.map_upper(sns.scatterplot)
 #         g.map_lower(sns.kdeplot)
 #         g.map_diag(sns.kdeplot)
-# 
+#
 #     def _parse_title(
 #         self,
 #         result=None,
@@ -1438,19 +1433,19 @@ class DCIProblem(object):
 #         title = super()._parse_title(result=result, lam_true=lam_true)
 #         if nc:
 #             title = f"nc = {result.index[0]}: " + title
-# 
+#
 #         return title
-# 
-# 
+#
+#
 # class SequentialProblem(PCAMUDProblem):
 #     """
 #     Class defining a SequentialDensity Problem for parameter estimation on.
-# 
+#
 #     To initialize the class, a forward model model, and parameters need to be
 #     sepcified. The main entrypoint for solving the estimation problem is the
 #     `seq_solve()` method, with the `search_params` class attribute controlling
 #     how the the sequential algorithm behaves.
-# 
+#
 #     Attributes
 #     ----------
 #     forward_model : callable
@@ -1458,7 +1453,7 @@ class DCIProblem(object):
 #     x0 : ndarray
 #         Initial state of the system.
 #     """
-# 
+#
 #     def __init__(
 #         self,
 #         samples,
@@ -1468,19 +1463,19 @@ class DCIProblem(object):
 #         weights=None,
 #     ):
 #         self.init_prob(samples, data, std_dev, pi_in=pi_in, weights=weights)
-# 
+#
 #     @property
 #     def it(self):
 #         return len(self.states["results"])
-# 
+#
 #     @property
 #     def num_it(self):
 #         return len(self.states["data"])
-# 
+#
 #     def init_prob(self, samples, data, std_dev, pi_in=None, weights=None):
 #         """
 #         Initialize problem
-# 
+#
 #         Initialize problem by setting the lambda samples, the values of the
 #         samples pushed through the forward map, and the observe distribution
 #         on the data. Can optionally as well set the initial and predicteed
@@ -1495,7 +1490,7 @@ class DCIProblem(object):
 #             "results": [],
 #             "states": [],
 #         }
-# 
+#
 #     def _create_binary_string(self, lst, max_int):
 #         binary_string = ""
 #         for i in range(max_int):
@@ -1504,7 +1499,7 @@ class DCIProblem(object):
 #             else:
 #                 binary_string += "0"
 #         return binary_string
-# 
+#
 #     def _get_qoi_combinations(
 #         self,
 #         max_tries=10,
@@ -1527,7 +1522,7 @@ class DCIProblem(object):
 #                     min_num, self.n_qoi + 1, int(self.n_qoi / max_tries)
 #                 )
 #                 tries_per = 1
-# 
+#
 #             combs = []
 #             qoi_choices = range(0, self.n_qoi)
 #             for num_ts in num_ts_list:
@@ -1536,9 +1531,9 @@ class DCIProblem(object):
 #                 )
 #                 tries_per = tries_per if tries_per < len(psble) else len(psble)
 #                 combs += random.sample(psble, tries_per)
-# 
+#
 #         return combs
-# 
+#
 #     def solve(
 #         self,
 #         num_splits: int = 1,
@@ -1553,12 +1548,12 @@ class DCIProblem(object):
 #         """
 #         self.qoi_method = qoi_method
 #         self.min_weight_thresh = min_weight_thresh
-# 
+#
 #         if self.qoi_method not in ["all", "linear", "random"]:
 #             msg = f"Unrecognized qoi method: {qoi}. Allowed: {am}"
 #             logger.error(msg)
 #             raise ValueError(msg)
-# 
+#
 #         self.states["qoi"] = np.array_split(self.qoi, num_splits, axis=1)
 #         self.states["data"] = np.array_split(self.data, num_splits, axis=0)
 #         pi_in = self.dists["pi_in"]
@@ -1578,7 +1573,7 @@ class DCIProblem(object):
 #                 weights=weights,
 #             )
 #             qoi_combs = self._get_qoi_combinations()
-# 
+#
 #             results = []
 #             qc_strs = []
 #             pca_states = []
@@ -1594,7 +1589,7 @@ class DCIProblem(object):
 #                 )
 #                 res_df = self.pca_results
 #                 res_df["qoi_comb"] = q_idx
-# 
+#
 #                 # actions = []
 #                 # for nc, res in res_df.groupby("nc"):
 #                 #     actions.append(self._get_action(res))
@@ -1603,7 +1598,7 @@ class DCIProblem(object):
 #                 temp = self.pca_states.copy()
 #                 temp["qoi_comb"] = q_idx
 #                 pca_states.append(temp)
-# 
+#
 #             res_df = pd.concat(results)
 #             res_df["closest"] = np.logical_and(
 #                 res_df["predict_delta"]
@@ -1629,7 +1624,7 @@ class DCIProblem(object):
 #             )
 #             it_results.append(res_df.copy())
 #             best_it_results.append(res_df.loc[[idx_max]].copy())
-# 
+#
 #             pca_states = pd.concat(pca_states, axis=0)
 #             pca_states["split"] = it
 #             it_states.append(
@@ -1646,13 +1641,13 @@ class DCIProblem(object):
 #                     ]
 #                 ]
 #             )
-# 
+#
 #             if it + 1 < self.num_it:
 #                 # TODO: Implement weight inflation if weights < min thresh?
 #                 logger.info("Update: setting pi_up -> pi_in, ratio -> weights")
 #                 pi_in = self.dists["pi_up"]
 #                 weights = self.state["ratio"]
-# 
+#
 #         best_it_result = pd.concat(
 #             best_it_results, keys=np.arange(self.num_it), names=["split"]
 #         )
@@ -1661,7 +1656,7 @@ class DCIProblem(object):
 #         )
 #         self.split_states = pd.concat(it_states, axis=0)
 #         self.result = best_it_result.iloc[[num_splits - 1]]
-# 
+#
 #     def get_summary_table(
 #         self,
 #     ):
@@ -1670,12 +1665,12 @@ class DCIProblem(object):
 #         """
 #         # TODO: Implement
 #         fields = ["Iteration", "NC", "E(r)", "D_KL"]
-# 
+#
 #         table = Table(show_header=True, header_style="bold magenta")
 #         cols = ["Key", "Value"]
 #         for c in cols:
 #             table.add_column(c)
-# 
+#
 #         res_df = self.results[-1]
 #         best_idx = res_df[best].argmax()
 #         row = (
@@ -1687,9 +1682,9 @@ class DCIProblem(object):
 #         )
 #         for i in range(len(fields)):
 #             table.add_row(fields[i], row[i])
-# 
+#
 #         return table
-# 
+#
 #     def plot_L(
 #         self,
 #         idx=None,
@@ -1707,14 +1702,14 @@ class DCIProblem(object):
 #     ):
 #         """
 #         Plot Lambda Space Distributions
-# 
+#
 #         Plot distributions over parameter space. This includes the initial and
 #         the updated distributions. Extends `MUDProblem` methods by allowing
 #         an `nc` argument to plot the solutions that use only `nc` number of
 #         principal components in the `q_pca` map. If `nc` is not specified, the
 #         best choice of `nc` will be picked from those tried, with the best
 #         being chosen according to the `best_method` set in `solve()`.
-# 
+#
 #         Parameters
 #         ----------
 #         param_idx : int, default=0
@@ -1726,7 +1721,7 @@ class DCIProblem(object):
 #             specified is only used.
 #         plot_mud: bool, default=True
 #             Whether to add a vertical line for the computed MUD point solution.
-# 
+#
 #         Returns
 #         -------
 #         ax, labels : Tuple
@@ -1741,7 +1736,7 @@ class DCIProblem(object):
 #                 mud_point = res[1]
 #                 ratio_col = res[2][0]
 #                 weight_col = res[2][1]
-# 
+#
 #         ax, labels = super().plot_L(
 #             lam_true=lam_true,
 #             mud_point=mud_point,
@@ -1755,9 +1750,9 @@ class DCIProblem(object):
 #             ax=ax,
 #             figsize=figsize,
 #         )
-# 
+#
 #         return ax, labels
-# 
+#
 #     def splits_param_density_plots(
 #         self,
 #         split_mask=None,
@@ -1779,7 +1774,7 @@ class DCIProblem(object):
 #             grid_plot[1],
 #             figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
 #         )
-# 
+#
 #         lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
 #         for i, ax in enumerate(ax.flat):
 #             result = self.split_results.loc[pd.IndexSlice[i, :, :], :]
@@ -1787,10 +1782,10 @@ class DCIProblem(object):
 #             best_idx = best_result.index.values[0]
 #             self.plot_L(idx=best_idx, param_idx=param_idx, lam_true=lam_true, ax=ax)
 #             ax.set_title(self._parse_title(result=result, lam_true=lam_true, nc=True))
-# 
+#
 #         fig.suptitle("Best MUD Estimates by Split For $\lambda_{param_idx}$")
 #         fig.tight_layout()
-# 
+#
 #     def get_full_df(
 #         self,
 #         df="state",
@@ -1799,20 +1794,20 @@ class DCIProblem(object):
 #         """
 #         Concatenate stored df
 #         """
-# 
+#
 #         if df not in self.dfs.keys():
 #             raise ValueError(f"{df} not one of {self.dfs.keys()}")
-# 
+#
 #         dfs = self.dfs[df]
 #         if iterations is not None:
 #             dfs = [dfs[i] for i in range(len(dfs)) if i in iterations]
-# 
+#
 #         return pd.concat(dfs, axis=0)
-# 
+#
 #     def _get_plot_df(self, idx=None, cols=["ratio"]):
 #         """
 #         Helper function to get sub df to plot
-# 
+#
 #         We use seaborn's kde plot on the dataframe of lambda samples to plot
 #         initial and updated distributions, but just weighted appropriately with
 #         the ratio. If want to plot solution using a different number of
@@ -1830,9 +1825,9 @@ class DCIProblem(object):
 #         df = self.state.join(state_cols)
 #         col_names = [f"{c}_plot" for c in cols]
 #         mud_point = get_df(self.split_results.loc[[idx]], "lam_MUD", self.n_params)[0]
-# 
+#
 #         return df, mud_point, col_names
-# 
+#
 #     def _parse_title(
 #         self,
 #         result=None,
@@ -1852,19 +1847,19 @@ class DCIProblem(object):
 #             title = f"qoi_comb = {result.index[0][2]}, " + title
 #         if split:
 #             title = f"Split {result.index[0][0]}: " + title
-# 
+#
 #         return title
-# 
-# 
+#
+#
 # class DynamicSequentialProblem(SequentialProblem):
 #     """
 #     Dynamic Seqential MUD Parameter Estimation Problem
-# 
+#
 #     To initialize the class, a forward model model, and parameters need to be
 #     sepcified. The main entrypoint for solving the estimation problem is the
 #     `seq_solve()` method, with the `search_params` class attribute controlling
 #     how the the sequential algorithm behaves.
-# 
+#
 #     Attributes
 #     ----------
 #     forward_model : callable
@@ -1872,14 +1867,14 @@ class DCIProblem(object):
 #     x0 : ndarray
 #         Initial state of the system.
 #     """
-# 
+#
 #     def __init__(
 #         self,
 #         model,
 #     ):
 #         self.model = model
 #         self.push_forwards = []
-# 
+#
 #     def _detect_shift(
 #         self,
 #         res,
@@ -1891,20 +1886,20 @@ class DCIProblem(object):
 #             return False
 #         if prev["action"] == "RESET":
 #             return False
-# 
+#
 #         # Mean condition - Shift in the mean exp_r value detected
 #         shift = True
 #         if self.e_r_delta is not None:
 #             condition = np.abs(prev["e_r"] - res["e_r"].values[0]) <= self.e_r_delta
 #             shift = shift if condition else False
-# 
+#
 #         # KL Divergence Condition - If exceeds threshold then shift
 #         if self.kl_thresh is not None:
 #             condition = res["kl"].values[0] < self.kl_thresh
 #             shift = shift if condition else False
-# 
+#
 #         return shift
-# 
+#
 #     def _get_action(
 #         self,
 #         res,
@@ -1921,9 +1916,9 @@ class DCIProblem(object):
 #                 action = "UPDATE"
 #         elif self._detect_shift(res):
 #             action = "RESET"
-# 
+#
 #         return action
-# 
+#
 #     def solve(
 #         self,
 #         time_windows,
@@ -1941,16 +1936,16 @@ class DCIProblem(object):
 #     ):
 #         """
 #         Iterative Solver
-# 
+#
 #         Iterative between solving and pushing model forward using sequential
 #         MUD algorithm for parameter estimation.
-# 
+#
 #         Parameters
 #         ----------
-# 
+#
 #         Returns
 #         -------
-# 
+#
 #         Note
 #         ----
 #         This will reset the state of the class and erase its previous dataframes.
@@ -1964,7 +1959,7 @@ class DCIProblem(object):
 #             msg = "Bad args:\n" + "\n".join(bad)
 #             logger.error(msg)
 #             raise ValueError(msg)
-# 
+#
 #         self.diff = diff
 #         if self.samples is not None:
 #             yn = input("Previous run exists. Do you want to reset state? y/(n)")
@@ -1972,7 +1967,7 @@ class DCIProblem(object):
 #                 return
 #             self.push_forwards = []
 #             self.states = []
-# 
+#
 #         np.random.seed(seed)  # Initial seed for sampling
 #         self.samples = self.model.get_uniform_initial_samples(
 #             scale=diff, num_samples=num_samples
@@ -1981,7 +1976,7 @@ class DCIProblem(object):
 #             time_windows.insert(0, 0)
 #         time_windows.sort()
 #         self.model.t0 = time_windows[0]
-# 
+#
 #         logger.info(f"Starting solve over time : {time_windows}")
 #         for it, tf in enumerate(time_windows[1:]):
 #             t0 = time_windows[it]
@@ -2001,7 +1996,7 @@ class DCIProblem(object):
 #             )
 #             self.iteration_update()
 #             logger.info(f" Summary:\n{log_table(self.get_summary_row())}")
-# 
+#
 #     def iteration_update(
 #         self,
 #     ):
@@ -2025,20 +2020,20 @@ class DCIProblem(object):
 #             )
 #         else:
 #             logger.info("No action taken, continuing with current samples")
-# 
+#
 #     def get_summary_row(
 #         self,
 #     ):
 #         """ """
 #         best = self.search_params["best"]
-# 
+#
 #         fields = ["Iteration", "Action", "NC", "E(r)", "D_KL"]
-# 
+#
 #         table = Table(show_header=True, header_style="bold magenta")
 #         cols = ["Key", "Value"]
 #         for c in cols:
 #             table.add_column(c)
-# 
+#
 #         res_df = self.results[-1]
 #         best_idx = res_df[best].argmax()
 #         row = (
@@ -2050,9 +2045,9 @@ class DCIProblem(object):
 #         )
 #         for i in range(len(fields)):
 #             table.add_row(fields[i], row[i])
-# 
+#
 #         return table
-# 
+#
 #     def get_full_df(
 #         self,
 #         df="state",
@@ -2061,12 +2056,12 @@ class DCIProblem(object):
 #         """
 #         Concatenate stored df
 #         """
-# 
+#
 #         if df not in self.dfs.keys():
 #             raise ValueError(f"{df} not one of {self.dfs.keys()}")
-# 
+#
 #         dfs = self.dfs[df]
 #         if iterations is not None:
 #             dfs = [dfs[i] for i in range(len(dfs)) if i in iterations]
-# 
+#
 #         return pd.concat(dfs, axis=0)

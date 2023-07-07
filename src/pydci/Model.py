@@ -69,9 +69,9 @@ class DynamicModel:
 
         # TODO: Hard code max number of states
         num_states = self.n_states if self.n_states < max_states else max_states
-        self.state_idxs = np.random.choice(self.n_states,
-                                          size=num_states,
-                                          replace=False)
+        self.state_idxs = np.random.choice(
+            self.n_states, size=num_states, replace=False
+        )
         self.state_idxs.sort()
 
         self.samples = []
@@ -168,7 +168,7 @@ class DynamicModel:
         x0_temp = self.x0
         self.t0 = ts[sample_ts_flag][-1]
         self.x0 = measurements[sample_ts_flag][-1]
-        logger.info(f'end_point: {self.t0}, {self.x0}')
+        logger.info(f"end_point: {self.t0}, {self.x0}")
 
         push_forwards = None
         if samples is not None:
@@ -177,9 +177,9 @@ class DynamicModel:
                     self.samples_x0 = self.get_initial_condition(x0_temp, len(samples))
                 samples_x0 = self.samples_x0
 
-            push_forwards = np.zeros((len(samples),
-                                      np.sum(sample_ts_flag),
-                                      self.n_sensors))
+            push_forwards = np.zeros(
+                (len(samples), np.sum(sample_ts_flag), self.n_sensors)
+            )
             with alive_bar(
                 len(samples),
                 title="Solving model sample set:",
@@ -189,12 +189,11 @@ class DynamicModel:
             ) as bar:
                 for j, s in enumerate(samples):
                     push_forwards[j, :, :] = self.forward_model(
-                            samples_x0[j], ts, tuple(s))[
-                                    sample_ts_idxs][:, self.state_idxs]
+                        samples_x0[j], ts, tuple(s)
+                    )[sample_ts_idxs][:, self.state_idxs]
                     bar()
 
-            self.samples_x0[:] = self.get_initial_condition(self.x0,
-                                                            len(samples))
+            self.samples_x0[:] = self.get_initial_condition(self.x0, len(samples))
 
         # Store everything in state DF
         data_df = pd.DataFrame(ts, columns=["ts"])
@@ -206,16 +205,19 @@ class DynamicModel:
         # self.states.append(state_df)
         args = {
             "data": measurements[sample_ts_flag][:, self.state_idxs].reshape(
-                np.sum(sample_ts_flag) * self.n_sensors, -1),
+                np.sum(sample_ts_flag) * self.n_sensors, -1
+            ),
             "std_dev": self.measurement_noise,
         }
         if push_forwards is not None:
-            q_lam_cols = [f"q_lam_{x}" for x in range(np.sum(
-                sample_ts_flag * self.n_sensors))]
+            q_lam_cols = [
+                f"q_lam_{x}" for x in range(np.sum(sample_ts_flag * self.n_sensors))
+            ]
             full_samples_df = pd.DataFrame(
                 np.hstack([samples, push_forwards.reshape(len(samples), -1)]),
-                columns=[f"lam_{x}" for x in range(self.n_params)] + q_lam_cols)
-            args['samples'] = full_samples_df
+                columns=[f"lam_{x}" for x in range(self.n_params)] + q_lam_cols,
+            )
+            args["samples"] = full_samples_df
             self.data.append(data_df)
             self.samples.append(full_samples_df)
 
@@ -313,8 +315,7 @@ class DynamicModel:
             label = "True State"
             if iteration != max_it:
                 label = None
-                plot_vals = df[df['ts'] <= df['ts'][
-                    df['sample_flag'] == True].max()]
+                plot_vals = df[df["ts"] <= df["ts"][df["sample_flag"] == True].max()]
             sns.lineplot(
                 x="ts",
                 y=f"q_lam_true_{state_idx}",
@@ -340,7 +341,7 @@ class DynamicModel:
                 )
             # Add Push Forward Data to the plot
             if plot_samples:
-                n_sample_ts = len(df[df['sample_flag']])
+                n_sample_ts = len(df[df["sample_flag"]])
                 cols = [f"q_lam_{i}" for i in range(n_states * n_sample_ts)]
                 max_samples = len(self.samples[iteration])
                 to_plot = n_samples if n_samples < max_samples else n_samples
@@ -350,9 +351,10 @@ class DynamicModel:
                     sample_df = pd.DataFrame(
                         np.array(
                             [
-                                df['ts'][df['sample_flag']].values,
-                                np.array(sample[1]).reshape(
-                                    (n_sample_ts, n_states))[:, state_idx]
+                                df["ts"][df["sample_flag"]].values,
+                                np.array(sample[1]).reshape((n_sample_ts, n_states))[
+                                    :, state_idx
+                                ],
                             ]
                         ).T,
                         columns=["ts", f"q_lam_{state_idx}"],
@@ -365,8 +367,9 @@ class DynamicModel:
                     plot_vals = sample_df
                     if iteration != max_it:
                         plot_vals = sample_df[
-                                sample_df['ts'] <= sample_df['ts'][
-                                    sample_df['sample_flag'] == True].max()]
+                            sample_df["ts"]
+                            <= sample_df["ts"][sample_df["sample_flag"] == True].max()
+                        ]
                     sns.lineplot(
                         x="ts",
                         y=f"q_lam_{state_idx}",
@@ -490,15 +493,16 @@ class DynamicModel:
         num_samples=100,
         diff=0.5,
         splits_per=1,
-        search_params={'num_splits': 1},
+        search_params={"num_splits": 1},
     ):
         """
         Iterative estimate
         """
         if num_samples < self.n_params:
-            raise ValueError(f'# of samples must be at least > # of params')
+            raise ValueError(f"# of samples must be at least > # of params")
         pi_in, samples = self.get_uniform_initial_samples(
-                num_samples=num_samples, scale=diff)
+            num_samples=num_samples, scale=diff
+        )
         best_flag = np.empty((num_samples, 1), dtype=bool)
         for it, t in enumerate(time_windows):
             logger.info(f"Starting iteration from {self.t0} to {t}")

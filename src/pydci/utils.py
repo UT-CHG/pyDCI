@@ -7,17 +7,19 @@ from typing import List, Tuple, Union
 
 import numpy as np
 import pandas as pd
+from numpy.linalg import LinAlgError
 from numpy.typing import ArrayLike
 from scipy.stats import gaussian_kde
 
-from numpy.linalg import LinAlgError
-
 
 class KDEError(Exception):
-
-    def __init__(self, X, name=None, weights=None,
-                 msg='Failed to compute gaussian_kde using scipy'):
-
+    def __init__(
+        self,
+        X,
+        name=None,
+        weights=None,
+        msg="Failed to compute gaussian_kde using scipy",
+    ):
         self.name = name
         self.X = X
         self.weights = weights
@@ -41,17 +43,18 @@ def gkde(X, weights=None, label=None):
     try:
         res = gaussian_kde(X, weights=weights)
     except (LinAlgError, ValueError) as e:
-        if 'array must not contain infs or NaNs' in str(e):
-            msg = 'scipy gaussian KDE failed because weights too small'
+        if "array must not contain infs or NaNs" in str(e):
+            msg = "scipy gaussian KDE failed because weights too small"
             raise KDEError(X, weights=weights, name=label, msg=msg)
         elif "data appears to lie in a lower-dimensional" in str(e):
-            msg = 'scipy gaussian KDE failed - Degenerative data covariance.'
+            msg = "scipy gaussian KDE failed - Degenerative data covariance."
             msg += "Can mean weights are too small or too few samples."
             raise KDEError(X, weights=weights, name=label, msg=msg)
         else:
             raise e
     else:
         return res
+
 
 def add_noise(signal: ArrayLike, sd: float = 0.05, seed: int = None):
     """

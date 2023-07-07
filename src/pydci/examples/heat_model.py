@@ -13,16 +13,16 @@ from mpi4py import MPI
 from petsc4py import PETSc
 from scipy.stats.distributions import norm, uniform
 
-from pydci.Model import DynamicModel
 from pydci.log import logger
+from pydci.Model import DynamicModel
 
 pyvsita_flag = False
 try:
     import pyvista
+
     pyvsita_flag = True
 except ImportError as ie:
-    logger.warning('Pyvista not found')
-
+    logger.warning("Pyvista not found")
 
 
 class HeatModel(DynamicModel):
@@ -78,9 +78,11 @@ class HeatModel(DynamicModel):
         self.sd = std_dev
         self.lscales = length_scales
         self.nmodes = nmodes
+
         # Create initial condition
         def def_init(x, a=5):
             return np.exp(-a * (x[0] ** 2 + x[1] ** 2))
+
         self.initial_condition = def_init if x0 is None else x0
 
         # Setup simulation
@@ -161,10 +163,12 @@ class HeatModel(DynamicModel):
             # Project function onto space by evaluating over field
             field_vals = field([self.coords[:, 0], self.coords[:, 1]])
         else:
-            raise ValueError('field must be either a float/int for constant' + \
-                            'over domain or a function, an array of KL ' + \
-                            'coeffiecients or None for random field of' + \
-                            f'coeffiecients. Type: {type(field)}')
+            raise ValueError(
+                "field must be either a float/int for constant"
+                + "over domain or a function, an array of KL "
+                + "coeffiecients or None for random field of"
+                + f"coeffiecients. Type: {type(field)}"
+            )
 
         if log:
             log_vals = np.log(field_vals / mean)
@@ -216,8 +220,7 @@ class HeatModel(DynamicModel):
         if true_k_x is None:
             self.lam_true = np.random.normal(0, 1, [1, self.nmodes])[0]
         else:
-            self.lam_true = self.project(field=true_k_x,
-                                         mean=self.mean, log=True)
+            self.lam_true = self.project(field=true_k_x, mean=self.mean, log=True)
 
     def init_kl(self, lscales=None, nmodes=None, sd=None, normalize=False):
         """
@@ -256,9 +259,7 @@ class HeatModel(DynamicModel):
             exp += ((x_1 - x_2) / (self.lscales[i])) ** 2.0
 
         self.cov = self.sd**2 * np.exp(-0.5 * exp)
-        self.modes = rf.calc_kl_modes(self.cov,
-                                      nmodes=self.nmodes,
-                                      normalize=normalize)
+        self.modes = rf.calc_kl_modes(self.cov, nmodes=self.nmodes, normalize=normalize)
 
     def reconstruct(self, projection, mean=None, log=True):
         """
@@ -267,10 +268,8 @@ class HeatModel(DynamicModel):
         mean = self.mean if mean is None else mean
         if log:
             mean = np.log(self.mean)
-            log_proj_vals = rf.reconstruct_kl(self.modes[1],
-                                              projection,
-                                              mean=mean)
-            return self.mean * np.exp(log_proj_vals)[:,0]
+            log_proj_vals = rf.reconstruct_kl(self.modes[1], projection, mean=mean)
+            return self.mean * np.exp(log_proj_vals)[:, 0]
         else:
             return rf.reconstruct_kl(self.modes[1], projection, mean=mean)
 
@@ -392,12 +391,7 @@ class HeatModel(DynamicModel):
 
         return field
 
-    def plot_field(self,
-                   field=None,
-                   project=False,
-                   cbar=True,
-                   diff=None,
-                   **kwargs):
+    def plot_field(self, field=None, project=False, cbar=True, diff=None, **kwargs):
         """
         Plot a field characterized by either:
           1. function - field is a callable on the coordinates array. This
@@ -415,8 +409,7 @@ class HeatModel(DynamicModel):
         if diff is not None:
             field = field - self._process_field(diff, project=project)
 
-        sc = ax.scatter(self.coords[:, 0], self.coords[:, 1],
-                        c=field, cmap="seismic")
+        sc = ax.scatter(self.coords[:, 0], self.coords[:, 1], c=field, cmap="seismic")
         ax.set_xlabel("$x_1$")
         ax.set_ylabel("$x_2$")
         ax.set_title("Field Sample $k(\mathbf{x})$")
@@ -471,7 +464,7 @@ class HeatModel(DynamicModel):
             The name of the output gif file. Default is 'u_time.gif'.
         """
         if not pyvista_flag:
-            raise ImportError('Cannot create gif - pyvista not found')
+            raise ImportError("Cannot create gif - pyvista not found")
         grid = pyvista.UnstructuredGrid(*plot.create_vtk_mesh(self.V))
         plotter = pyvista.Plotter()
         plotter.open_gif(gif_name)
@@ -620,24 +613,22 @@ class HeatModel(DynamicModel):
 
         return sol
 
-    def k_x_mud_plot(self,
-                     iteration=0,
-                     figsize=(18,5)):
+    def k_x_mud_plot(self, iteration=0, figsize=(18, 5)):
         """
         Plot estimated and True k(x)
         """
         iteration = 0
-        fig, ax = plt.subplots(1, 3, figsize=(18,5))
-        self.plot_field(field=self.probs[iteration].mud_point,
-                        ax=ax[0])
-        ax[0].set_title('$k^{MUD}(x)$')
+        fig, ax = plt.subplots(1, 3, figsize=(18, 5))
+        self.plot_field(field=self.probs[iteration].mud_point, ax=ax[0])
+        ax[0].set_title("$k^{MUD}(x)$")
         self.plot_field(field=self.lam_true, ax=ax[1])
-        ax[1].set_title('$k^{\dagger}(x)$')
-        ax[1].set_ylabel('')
-        self.plot_field(field=self.probs[iteration].mud_point,
-                        diff=self.lam_true, ax=ax[2])
-        ax[2].set_title('Error')
-        ax[2].set_ylabel('')
+        ax[1].set_title("$k^{\dagger}(x)$")
+        ax[1].set_ylabel("")
+        self.plot_field(
+            field=self.probs[iteration].mud_point, diff=self.lam_true, ax=ax[2]
+        )
+        ax[2].set_title("Error")
+        ax[2].set_ylabel("")
         fig.tight_layout
 
 

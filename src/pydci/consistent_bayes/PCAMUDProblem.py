@@ -42,21 +42,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from numpy.typing import ArrayLike
+from alive_progress import alive_bar
 from numpy.linalg import LinAlgError
+from numpy.typing import ArrayLike
 from rich.table import Table
 from scipy.stats import distributions as dist  # type: ignore
 from scipy.stats import rv_continuous  # type: ignore
 from scipy.stats import entropy
 from scipy.stats import gaussian_kde as gkde  # type: ignore
 from scipy.stats.distributions import norm
-from alive_progress import alive_bar
 from sklearn.decomposition import PCA  # type: ignore
 from sklearn.preprocessing import StandardScaler  # type: ignore
 
 from pydci.consistent_bayes.MUDProblem import MUDProblem
 from pydci.log import disable_log, enable_log, log_table, logger
-from pydci.utils import fit_domain, get_df, put_df, set_shape, KDEError
+from pydci.utils import KDEError, fit_domain, get_df, put_df, set_shape
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -93,6 +93,9 @@ class PCAMUDProblem(MUDProblem):
         to aggregating the data into the `q_pca()` map and determing how many
         principal components to use for optimal solution.
 
+    TODO:
+        - Make pca_maks a property
+
     """
 
     def __init__(
@@ -120,7 +123,11 @@ class PCAMUDProblem(MUDProblem):
         """
         # Assume gaussian error around mean of data with assumed noise
         super().init_prob(
-            samples, data, std_dev, pi_in=pi_in, pi_pr=None,
+            samples,
+            data,
+            std_dev,
+            pi_in=pi_in,
+            pi_pr=None,
         )
         self.qoi = self.q_lam
         self.pca_states = None
@@ -139,7 +146,7 @@ class PCAMUDProblem(MUDProblem):
         max_nc = max_nc if max_nc < min_shape else min_shape
 
         # Standarize and perform linear PCA
-        logger.info(f'Computing PCA using {max_nc} components')
+        logger.info(f"Computing PCA using {max_nc} components")
         sc = StandardScaler()
         pca = PCA(n_components=max_nc)
         X_train = pca.fit_transform(sc.fit_transform(residuals))
@@ -148,7 +155,7 @@ class PCAMUDProblem(MUDProblem):
             "vecs": pca.components_,
             "var": pca.explained_variance_,
         }
-        logger.info(f'PCA Variance: {pca.explained_variance_}')
+        logger.info(f"PCA Variance: {pca.explained_variance_}")
 
         # Compute Q_PCA
         self.q_lam = residuals @ pca.components_.T
@@ -159,8 +166,8 @@ class PCAMUDProblem(MUDProblem):
         Save current state, adding columns with values in vals dictionary
         """
         keys = vals.keys()
-        cols = [c for c in self.state.columns if c.startswith('lam_')]
-        cols += [c for c in self.state.columns if c.startswith('q_pca_')]
+        cols = [c for c in self.state.columns if c.startswith("lam_")]
+        cols += [c for c in self.state.columns if c.startswith("q_pca_")]
         cols += ["weight", "pi_in", "pi_obs", "pi_pr", "ratio", "pi_up"]
         state = self.state[cols].copy()
         for key in keys:
@@ -203,22 +210,27 @@ class PCAMUDProblem(MUDProblem):
         try:
             super().solve()
         except ZeroDivisionError as z:
-            logger.exception(f"({pca_mask}: {pca_components}): " +
-                             "Predictabiltiy assumption violated")
+            logger.exception(
+                f"({pca_mask}: {pca_components}): "
+                + "Predictabiltiy assumption violated"
+            )
             raise z
         except KDEError as k:
-            logger.exception(f"({pca_mask}: {pca_components}): " +
-                             "Unable to perform kernel density estimates")
+            logger.exception(
+                f"({pca_mask}: {pca_components}): "
+                + "Unable to perform kernel density estimates"
+            )
             raise k
         else:
-            self.result['pca_components'] = str(pca_components)
-            self.result['pca_mask'] = str(pca_mask)
+            self.result["pca_components"] = str(pca_components)
+            self.result["pca_mask"] = str(pca_mask)
             self.q_lam = all_qoi
 
     def solve_it(
         self,
         pca_components=[[0]],
-        pca_splits: List[int] = [None],
+        pca_mask: List[int] = None,
+        pca_splits: List[int] = 1,
         exp_thresh: float = 0.5,
         state_extra: dict = None,
     ):
@@ -249,10 +261,21 @@ class PCAMUDProblem(MUDProblem):
         it_results = []
         weights = []
         failed = False
+        if isinstance(pca_splits, int) or pca_splits is None:
+            # Make even number of splits of all qoi if mask is not specified
+            pca_mask = np.arange(self.n_qoi) if pca_mask is None else pca_mask
+            pca_splits = [
+                range(x[0], x[-1]) for x in np.array_split(pca_mask, pca_splits)
+            ]
+        elif isinstance(pca_splits, list):
+            if pca_mask is not None:
+                raise ValueError(
+                    "Cannot specify both pca_mask and non-integer pca_splits"
+                )
         iterations = [(i, j) for i in pca_splits for j in pca_components]
         for i, (pca_mask, pca_cs) in enumerate(iterations):
-            str_val = pca_mask if pca_mask is not None else 'ALL'
-            logger.info(f'Solving using ({str_val}, {pca_cs})')
+            str_val = pca_mask if pca_mask is not None else "ALL"
+            logger.info(f"Solving using ({str_val}, {pca_cs})")
             self.set_weights(weights)
             try:
                 self.solve(
@@ -261,46 +284,46 @@ class PCAMUDProblem(MUDProblem):
                 )
             except ZeroDivisionError as z:
                 if i == 0:
-                    z.msg = 'Pred assumption failed on first iteration.'
+                    z.msg = "Pred assumption failed on first iteration."
                     raise z
                 else:
-                    logger.info(
-                        f"({i}): pred assumption failed - str({z})")
+                    logger.info(f"({i}): pred assumption failed - str({z})")
                     failed = True
             except KDEError as k:
                 if i == 0:
-                    k.msg = 'Failed to estiamte KDEs on first iteration.'
+                    k.msg = "Failed to estiamte KDEs on first iteration."
                     raise k
                 else:
-                    logger.info(
-                        f"({i}): KDE estimation failed - str({k})")
+                    logger.info(f"({i}): KDE estimation failed - str({k})")
                     failed = True
             else:
-                e_r = self.result['e_r'].values[0]
+                e_r = self.result["e_r"].values[0]
                 if (diff := np.abs(e_r - 1.0)) > exp_thresh or failed:
-                    logger.info(f'|E(r) - 1| = {diff} > {exp_thresh} - Stopping')
+                    logger.info(f"|E(r) - 1| = {diff} > {exp_thresh} - Stopping")
                     failed = True
 
             if failed:
-                logger.info(f'Resetting to last solution at {iterations[i-1]}')
+                logger.info(f"Resetting to last solution at {iterations[i-1]}")
                 self.set_weights(weights[:-1])
                 self.solve(
-                    pca_mask=iterations[i-1][0],
-                    pca_components=iterations[i-1][1],
+                    pca_mask=iterations[i - 1][0],
+                    pca_components=iterations[i - 1][1],
                 )
                 break
             else:
-                state_vals = {'iteration': len(it_results),
-                              'pca_components': str(pca_cs),
-                              'pca_mask': str(pca_mask)}
+                state_vals = {
+                    "iteration": len(it_results),
+                    "pca_components": str(pca_cs),
+                    "pca_mask": str(pca_mask),
+                }
                 if state_extra is not None:
                     state_vals.update(state_extra)
                 self.save_state(state_vals)
                 it_results.append(self.result.copy())
-                it_results[-1]['i'] = len(it_results) - 1
+                it_results[-1]["i"] = len(it_results) - 1
                 if i != len(iterations) - 1:
-                    logger.info('Updating weights')
-                    weights.append(self.state['ratio'].values)
+                    logger.info("Updating weights")
+                    weights.append(self.state["ratio"].values)
 
         self.it_results = pd.concat(it_results)
         self.result = self.it_results.iloc[[-1]]
@@ -363,16 +386,20 @@ class PCAMUDProblem(MUDProblem):
             length=40,
         ) as bar:
             for idx, (pca_splits, pca_components) in enumerate(search_list):
-                logger.info(f'Solving with:\npca_splits: {pca_splits}\n' +
-                            f'pc: {pca_components}')
-                self.solve_it(pca_components=pca_components,
-                              pca_splits=pca_splits,
-                              exp_thresh=exp_thresh,
-                              state_extra={'index': idx})
+                logger.info(
+                    f"Solving with:\npca_splits: {pca_splits}\n"
+                    + f"pc: {pca_components}"
+                )
+                self.solve_it(
+                    pca_components=pca_components,
+                    pca_splits=pca_splits,
+                    exp_thresh=exp_thresh,
+                    state_extra={"index": idx},
+                )
                 all_search_results.append(self.it_results.copy())
-                all_search_results[-1]['index'] = idx
+                all_search_results[-1]["index"] = idx
                 all_results.append(self.result.copy())
-                all_results[-1]['index'] = idx
+                all_results[-1]["index"] = idx
                 bar()
 
         # Parse DataFrame with results of mud estimations for each ts choice
@@ -400,8 +427,8 @@ class PCAMUDProblem(MUDProblem):
 
         # Re-solve Using Best
         self.solve(
-            pca_mask=eval(self.result['pca_mask'].values[0]),
-            pca_components=eval(self.result['pca_components'].values[0]),
+            pca_mask=eval(self.result["pca_mask"].values[0]),
+            pca_components=eval(self.result["pca_components"].values[0]),
         )
 
     def plot_L(
@@ -450,9 +477,10 @@ class PCAMUDProblem(MUDProblem):
         if df is None:
             df = self.state
         else:
-            df = self.pca_states[self.pca_states['iteration'] == iteration]
-            mud_point = get_df(self.pca_results.loc[iteration],
-                               "lam_MUD", self.n_params)[0]
+            df = self.pca_states[self.pca_states["iteration"] == iteration]
+            mud_point = get_df(
+                self.pca_results.loc[iteration], "lam_MUD", self.n_params
+            )[0]
 
         ax, labels = super().plot_L(
             lam_true=lam_true,
