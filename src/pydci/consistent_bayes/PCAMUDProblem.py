@@ -46,17 +46,14 @@ from alive_progress import alive_bar
 from numpy.linalg import LinAlgError
 from numpy.typing import ArrayLike
 from rich.table import Table
-from scipy.stats import distributions as dist  # type: ignore
 from scipy.stats import rv_continuous  # type: ignore
-from scipy.stats import entropy
-from scipy.stats import gaussian_kde as gkde  # type: ignore
 from scipy.stats.distributions import norm
 from sklearn.decomposition import PCA  # type: ignore
 from sklearn.preprocessing import StandardScaler  # type: ignore
 
 from pydci.consistent_bayes.MUDProblem import MUDProblem
 from pydci.log import disable_log, enable_log, log_table, logger
-from pydci.utils import KDEError, fit_domain, get_df, put_df, set_shape
+from pydci.utils import KDEError, fit_domain, get_df, put_df, set_shape, closest_factors
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -138,6 +135,7 @@ class PCAMUDProblem(MUDProblem):
         Build QoI Map Using Data and Measurements
 
         Aggregate q_lam data with observed data for MUD convergence.
+        TODO: Cache the results of this for when it is repeatedly computed.
         """
         mask = np.arange(self.n_qoi) if mask is None else mask
         residuals = np.subtract(self.data[mask].T, self.qoi[:, mask]) / self.std_dev
@@ -205,7 +203,7 @@ class PCAMUDProblem(MUDProblem):
         self.q_pca(mask=pca_mask)
         all_qoi = self.q_lam
         self.q_lam = self.q_lam[:, pca_components]
-        self.dists["pi_obs"] = dist.norm(loc=len(pca_components) * [0], scale=1)
+        self.dists["pi_obs"] = norm(loc=len(pca_components) * [0], scale=1)
         self.dists["pi_pr"] = None
         try:
             super().solve()
@@ -243,24 +241,14 @@ class PCAMUDProblem(MUDProblem):
 
         Parameters
         ----------
-        pca_mask: List[int], default=None
-            Used control what subset of the observed data is used in the data
-            constructed map `q_pca()`
-        components_mask: List[int], default=[0]
-            Used control what subset of pca components are used in Q_PCA map.
-        max_nc: int, default=None
-            Specifies the max number of principal components to use when doing
-            the PCA transformation on the residuals between the observed and
-            simulated data. If not specified, defaults to the min of the number
-            of states and the number of parameters.
-        exp_thresh: float, default=0.5
-            Threshold to accept a solution to the MUD problem as a valid
-            solution. Any solution more than `exp_thresh` away from 1.0 will
-            be deemed as violating the predictability assumption and not valid.
         """
         it_results = []
         weights = []
         failed = False
+        if exp_thresh <= 0:
+            msg = f"Expected ratio thresh must be a float > 0: {exp_thresh}"
+            logger.error(msg)
+            raise ValueError(msg)
         if isinstance(pca_splits, int) or pca_splits is None:
             # Make even number of splits of all qoi if mask is not specified
             pca_mask = np.arange(self.n_qoi) if pca_mask is None else pca_mask
@@ -331,38 +319,15 @@ class PCAMUDProblem(MUDProblem):
     def solve_search(
         self,
         search_list,
-        exp_thresh: float = 0.1,
+        def_args = None,
+        exp_thresh: float = 0.5,
         best_method: str = "closest",
     ):
         """
-        Solve the parameter estimation problem
-
-        This extends the `MUDProblem` solution class by using the `q_pca()` map
-        to aggregate data between the observed and predicted values and
-        determine the best MUD estimate that fits the data.
+        Search through different iterations of solvign the PCA problem
 
         Parameters
         ----------
-        pca_mask: List[int], default=None
-            Used control what subset of the observed data is used in the data
-            constructed map `q_pca()`
-        max_nc: int, default=None
-            Specifies the max number of principal components to use when doing
-            the PCA transformation on the residuals between the observed and
-            simulated data. If not specified, defaults to the min of the number
-            of states and the number of parameters.
-        exp_thresh: float, default=0.5
-            Threshold to accept a solution to the MUD problem as a valid
-            solution. Any solution more than `exp_thresh` away from 1.0 will
-            be deemed as violating the predictability assumption and not valid.
-        best_method: str, default="closest"
-            One of "closest", "min_k", or "max_kl", this specifies which
-            solution should be deemed the "best". Closest is for the MUD
-            estimate corresponding to the E(r) value closest to 1, while min/max
-            kl specify the MUD estimate with the corresponding min/max KL
-            divergence, indicating the least/most informative update. Note this
-            is of estimates that are within `exp_thresh` of E(r). If none are,
-            then no solution will be returned.
         """
         am = ["closest", "min_kl", "max_kl"]
         if best_method not in am:
@@ -373,8 +338,6 @@ class PCAMUDProblem(MUDProblem):
             msg = f"Expected ratio thresh must be a float > 0: {exp_thresh}"
             logger.error(msg)
             raise ValueError(msg)
-        self.exp_thresh = exp_thresh
-        self.best_method = best_method
 
         all_search_results = []
         all_results = []
@@ -385,17 +348,15 @@ class PCAMUDProblem(MUDProblem):
             receipt=True,
             length=40,
         ) as bar:
-            for idx, (pca_splits, pca_components) in enumerate(search_list):
-                logger.info(
-                    f"Solving with:\npca_splits: {pca_splits}\n"
-                    + f"pc: {pca_components}"
-                )
-                self.solve_it(
-                    pca_components=pca_components,
-                    pca_splits=pca_splits,
-                    exp_thresh=exp_thresh,
-                    state_extra={"index": idx},
-                )
+            for idx, args in enumerate(search_list):
+                args.update(def_args if def_args is not None else {})
+                logger.info(f"Solving with args:\n{args}")
+
+                # Solve -> Saves states in state dictionary
+                self.solve_it(**args, state_extra={"search_index": idx})
+
+                # Store results per each iteration and final result
+                # This will be erased the next iteration if we don't store it
                 all_search_results.append(self.it_results.copy())
                 all_search_results[-1]["index"] = idx
                 all_results.append(self.result.copy())
@@ -403,9 +364,9 @@ class PCAMUDProblem(MUDProblem):
                 bar()
 
         # Parse DataFrame with results of mud estimations for each ts choice
-        res_df = pd.concat(all_results)  # , keys=nc_list, names=['nc'])
+        res_df = pd.concat(all_results)
         res_df["predict_delta"] = np.abs(res_df["e_r"] - 1.0)
-        res_df["within_thresh"] = res_df["predict_delta"] <= self.exp_thresh
+        res_df["within_thresh"] = res_df["predict_delta"] <= exp_thresh
         res_df["closest"] = np.logical_and(
             res_df["predict_delta"]
             <= res_df[res_df["within_thresh"]]["predict_delta"].min(),
@@ -423,17 +384,18 @@ class PCAMUDProblem(MUDProblem):
         # Set to best
         self.search_results = res_df
         self.all_search_results = pd.concat(all_search_results)
-        self.result = res_df[res_df[self.best_method]]
+        self.result = res_df[res_df[best_method]]
 
-        # Re-solve Using Best
-        self.solve(
-            pca_mask=eval(self.result["pca_mask"].values[0]),
-            pca_components=eval(self.result["pca_components"].values[0]),
-        )
+        if len(self.result) == 0:
+            raise RuntimeError('No solution found within exp_thresh: {res_df}')
+        else:
+            # Re-solve Using Best
+            self.solve_it(**search_list[self.result['index'].values[0]])
 
     def plot_L(
         self,
         iteration=-1,
+        nc=None,
         lam_true=None,
         mud_point=None,
         df=None,
@@ -474,13 +436,11 @@ class PCAMUDProblem(MUDProblem):
             Tuple of (1) matplotlib axis object where distributions where
             plotted and (2) List of labels that were plotted, in order plotted.
         """
-        if df is None:
+        if self.pca_states is None:
             df = self.state
         else:
-            df = self.pca_states[self.pca_states["iteration"] == iteration]
-            mud_point = get_df(
-                self.pca_results.loc[iteration], "lam_MUD", self.n_params
-            )[0]
+            iterations = self.pca_states["iteration"].unique()
+            df = self.pca_states[self.pca_states["iteration"] == iterations[iteration]]
 
         ax, labels = super().plot_L(
             lam_true=lam_true,
@@ -573,12 +533,16 @@ class PCAMUDProblem(MUDProblem):
         lam_true=None,
         lam_kwargs=None,
         q_lam_kwargs=None,
+        axs=None,
         figsize=(14, 6),
     ):
         """
         Plot param and observable space onto sampe plot
         """
-        fig, axs = plt.subplots(1, 2, figsize=(14, 6))
+        if axs is None:
+            fig, axs = plt.subplots(1, 2, figsize=(14, 6))
+        elif len(axs) != 2:
+            len(axs) != self.n_params
         lam_kwargs = {} if lam_kwargs is None else lam_kwargs
         q_lam_kwargs = {} if q_lam_kwargs is None else q_lam_kwargs
         lam_kwargs["ax"] = axs[0]
@@ -588,6 +552,7 @@ class PCAMUDProblem(MUDProblem):
         self.plot_L(**lam_kwargs)
         self.plot_D(**q_lam_kwargs)
         lam_true = lam_kwargs.get("lam_true", None)
+        fig = axs[0].get_figure()
         fig.suptitle(
             self._parse_title(
                 result=self.result if nc is None else self.pca_results.loc[[nc]],
@@ -607,7 +572,7 @@ class PCAMUDProblem(MUDProblem):
     ):
         base_size = 4
         n_params = self.n_params if self.n_params <= max_np else max_np
-        grid_plot = self._closest_factors(n_params)
+        grid_plot = closest_factors(n_params)
         fig, ax = plt.subplots(
             grid_plot[0],
             grid_plot[1],
@@ -619,9 +584,10 @@ class PCAMUDProblem(MUDProblem):
             self.plot_L(nc=nc, param_idx=i, lam_true=lam_true, ax=ax)
             ax.set_title(f"$\lambda_{i}$")
 
+        result= self.result if nc is None or self.pca_results is None else self.pca_results.loc[[nc]]
         fig.suptitle(
             self._parse_title(
-                result=self.result if nc is None else self.pca_results.loc[[nc]],
+                result=result,
                 nc=nc,
                 lam_true=lam_true,
             )
@@ -640,7 +606,7 @@ class PCAMUDProblem(MUDProblem):
             nc_mask = np.arange(1, len(self.pca_results) + 1)
         nc = len(nc_mask)
         nc = nc if nc <= max_np else max_np
-        grid_plot = self._closest_factors(nc)
+        grid_plot = closest_factors(nc)
         fig, ax = plt.subplots(
             grid_plot[0],
             grid_plot[1],

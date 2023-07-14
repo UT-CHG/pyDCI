@@ -15,9 +15,10 @@ from matplotlib.patches import Rectangle
 from rich.table import Table
 from scipy.stats.distributions import uniform
 
-from pydci import SplitSequentialProblem
 from pydci.log import log_table, logger
 from pydci.utils import add_noise, get_df, get_uniform_box, put_df, set_shape
+from pydci import PCAMUDProblem
+
 
 interval_colors = sns.color_palette("muted", n_colors=50)
 
@@ -240,15 +241,16 @@ class DynamicModel:
 
         return init_conds
 
-    def get_uniform_initial_samples(self, center=None, scale=0.5, num_samples=1000):
+    def get_uniform_initial_samples(self, domain=None, center=None, scale=0.5, num_samples=1000):
         """
         Generate initial samples from uniform distribution over domain set by
         `self.set_domain`.
         """
-        center = self.lam_true if center is None else center
-        domain = get_uniform_box(
-            self.lam_true, factor=scale, mins=self.param_mins, maxs=self.param_maxs
-        )
+        if domain is None:
+            center = self.lam_true if center is None else center
+            domain = get_uniform_box(
+                self.lam_true, factor=scale, mins=self.param_mins, maxs=self.param_maxs
+            )
         loc = domain[:, 0]
         scale = domain[:, 1] - domain[:, 0]
         logger.info(
@@ -487,37 +489,6 @@ class DynamicModel:
 
         return ax
 
-    def estimate_params(
-        self,
-        time_windows,
-        num_samples=100,
-        diff=0.5,
-        splits_per=1,
-        search_params={"num_splits": 1},
-    ):
-        """
-        Iterative estimate
-        """
-        if num_samples < self.n_params:
-            raise ValueError(f"# of samples must be at least > # of params")
-        pi_in, samples = self.get_uniform_initial_samples(
-            num_samples=num_samples, scale=diff
-        )
-        best_flag = np.empty((num_samples, 1), dtype=bool)
-        for it, t in enumerate(time_windows):
-            logger.info(f"Starting iteration from {self.t0} to {t}")
-            args = self.forward_solve(t, samples=samples)
-            prob = SplitSequentialProblem(
-                args["samples"], args["data"], args["std_dev"], pi_in=pi_in
-            )
-            prob.solve(**search_params)
-            logger.info(f"Solution {prob.result}")
-            best_flag[:] = False
-            best_flag[prob.mud_arg] = True
-            self.samples[it]["best_flag"] = best_flag
-            self.probs.append(prob)
-            samples = prob.sample_dist(num_samples=num_samples)
-
     def plot_states(self, base_size=5):
         """
         Plot states over time
@@ -545,3 +516,52 @@ class DynamicModel:
         for prob in len(self.probs):
             for i, ax in enumerate(ax.flat):
                 prob.plot_L(param_idx=i, ax=ax)
+
+    def forward_model(
+        self,
+        x0,
+        times,
+        lam,
+    ):
+        """
+        Forward model model base function -> To be overwritten
+
+        TODO:
+            - Document
+        """
+        raise NotImplementedError("forward_model() base class skeleton.")
+
+    def estimate_params(
+        self,
+        time_windows,
+        search_params,
+        num_samples=100,
+        diff=0.5,
+    ):
+        """
+        Iterative estimate
+
+        TODO:
+            Updated using PCAMudProblem.solve() search method.
+        """
+        if num_samples < self.n_params:
+            raise ValueError(f"# of samples must be at least > # of params")
+        pi_in, samples = self.get_uniform_initial_samples(
+            num_samples=num_samples, scale=diff
+        )
+        best_flag = np.empty((num_samples, 1), dtype=bool)
+        for it, t in enumerate(time_windows):
+            logger.info(f"Starting iteration from {self.t0} to {t}")
+            forward_res = self.forward_solve(t, samples=samples)
+            prob = PCAMUDProblem(
+                forward_res["samples"], forward_res["data"],
+                self.measurement_noise, pi_in=pi_in
+            )
+            sp = search_params if isinstance(search_params, dict) else search_params[it]
+            prob.solve_search(**sp)
+            logger.info(f"Solution {prob.result}")
+            best_flag[:] = False
+            best_flag[prob.mud_arg] = True
+            self.samples[it]["best_flag"] = best_flag
+            self.probs.append(prob)
+            samples = prob.sample_dist(num_samples=num_samples)

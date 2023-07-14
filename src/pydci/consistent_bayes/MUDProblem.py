@@ -149,12 +149,25 @@ class MUDProblem(DCIProblem):
         results DataFrame that is returned.
         """
         super().solve()
-        m = np.argmax(self.state["pi_up"])
-        mud_point = get_df(self.state.loc[[m]], "lam", size=self.n_params)
+        m, mud_point = self.get_mud_point()
         self.result = put_df(self.result, "lam_MUD", mud_point, size=self.n_params)
         self.result["MUD_idx"] = m
         self.mud_point = mud_point[0]
         self.mud_arg = m
+
+    def get_mud_point(self, state_df=None):
+        """
+        Get MUD Point from DataFrame
+
+        Get MUD point from DataFrame. If DataFrame is not passed in, use the
+        `result` attribute of the class.
+        """
+        if state_df is None:
+            state_df = self.state
+        m = np.argmax(state_df["pi_up"])
+        mud_point = get_df(state_df.loc[[m]], "lam", size=self.n_params)
+        return m, mud_point
+        
 
     def plot_L(
         self,
@@ -223,7 +236,7 @@ class MUDProblem(DCIProblem):
             )
             labels.append(lam_true_label)
 
-        mud_point = self.mud_point if mud_point is None else mud_point
+        mud_point = mud_point if mud_point is not None else self.get_mud_point(df)[1][0]
         mud_label = f"$\lambda^{{MUD}}_{param_idx} = " + f"{mud_point[param_idx]:.4f}$"
         ax.axvline(
             x=mud_point[param_idx],

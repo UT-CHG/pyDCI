@@ -3,13 +3,14 @@ pyDCI Utilities
 
 """
 import pdb
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Dict, List, Any
 
 import numpy as np
 import pandas as pd
 from numpy.linalg import LinAlgError
 from numpy.typing import ArrayLike
 from scipy.stats import gaussian_kde
+from itertools import product
 
 
 class KDEError(Exception):
@@ -204,7 +205,39 @@ def get_df(df, name, size=1):
     return val
 
 
-def closest_factors(n):
+def closest_factors(n: int) -> Tuple[int, int]:
+    """
+    Returns the two closest factors of an integer.
+
+    Parameters
+    ----------
+    n : int
+        The integer to find the closest factors of.
+
+    Returns
+    -------
+    Tuple[int, int]
+        A tuple of two integers that are the closest factors of `n`.
+    """
     for i in range(int(n**0.5), 0, -1):
         if n % i == 0:
             return (i, n // i)
+
+def generate_combinations(args_dict: Dict[str, List[Any]]) -> List[Dict[str, Any]]:
+    """
+    Generate a list of dictionaries with every combination of possible arguments for each key in the input dictionary.
+
+    Parameters
+    ----------
+    args_dict : dict
+        A dictionary where each key is a parameter name and each value is a list of possible arguments for that parameter.
+
+    Returns
+    -------
+    list
+        A list of dictionaries, where each dictionary contains one combination of possible arguments for each key in the input dictionary.
+    """
+    keys = args_dict.keys()
+    values = args_dict.values()
+    combinations = list(product(*values))
+    return [dict(zip(keys, combination)) for combination in combinations]

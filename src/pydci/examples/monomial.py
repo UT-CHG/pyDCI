@@ -11,8 +11,8 @@ class Monomial1D(Model.DynamicModel):
     def __init__(
         self,
         p,
-        x0=[0, 0],  # Note in the constant monomial case, initial state won't matter
-        lam_true=[0.75],
+        x0=[0],  # Note in the constant monomial case, initial state won't matter
+        lam_true=[0.25**0.2],
         solve_ts=1.0,
         sample_ts=1.1,
         measurement_noise=0.1,
@@ -37,7 +37,11 @@ class Monomial1D(Model.DynamicModel):
         """
         Monomial Forward Model
         """
-        return np.array([[lam[0] ** self.p]])
+        # return np.array([[lam[0] ** self.p]])
+        res = np.repeat(
+            np.array([[lam[0] ** self.p]]), len(times), axis=0
+        )
+        return res
 
 
 class Monomial2D(Model.DynamicModel):
