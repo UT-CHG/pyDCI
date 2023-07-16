@@ -56,7 +56,6 @@ class DynamicModel:
     ):
         self.x0 = x0
         self.t0 = t0
-        self.samples = None
         self.samples_x0 = None
         self.lam_true = np.array(lam_true)
         self.measurement_noise = measurement_noise
@@ -69,6 +68,7 @@ class DynamicModel:
         self.state_maxs = state_maxs
 
         # TODO: Hard code max number of states
+        # ! Justify and elaborte on this limitation - Warning messages maybe?
         num_states = self.n_states if self.n_states < max_states else max_states
         self.state_idxs = np.random.choice(
             self.n_states, size=num_states, replace=False
@@ -158,6 +158,7 @@ class DynamicModel:
 
         sample_step = int(self.sample_ts / self.solve_ts)
         sample_ts_flag = np.mod(np.arange(len(ts)), sample_step) == 0
+        sample_ts_flag[-1] = True
         sample_ts_idxs = np.where(sample_ts_flag)[0]
         measurements = np.empty((len(ts), self.n_states))
         measurements[:] = np.nan
@@ -288,6 +289,7 @@ class DynamicModel:
     def plot_state(
         self,
         df=None,
+        plot_true=True,
         plot_measurements=True,
         plot_samples=True,
         n_samples=10,
@@ -313,20 +315,20 @@ class DynamicModel:
             n_ts = len(df)
             n_states = len([x for x in df.columns if x.startswith("q_lam_true")])
 
-            plot_vals = df
-            label = "True State"
-            if iteration != max_it:
-                label = None
-                plot_vals = df[df["ts"] <= df["ts"][df["sample_flag"] == True].max()]
-            sns.lineplot(
-                x="ts",
-                y=f"q_lam_true_{state_idx}",
-                ax=ax,
-                color="blue",
-                data=plot_vals,
-                linewidth=2,
-                label=label,
-            )
+            # plot_vals = df
+            # if iteration != max_it:
+            #     label = None
+            #     plot_vals = df[df["ts"] <= df["ts"][df["sample_flag"] == True].max()]
+            if plot_true:
+                sns.lineplot(
+                    x="ts",
+                    y=f"q_lam_true_{state_idx}",
+                    ax=ax,
+                    color="blue",
+                    data=df,
+                    linewidth=2,
+                    label="True State",
+                )
             # Add Measurement Data to the plot
             if plot_measurements:
                 label = None if iteration != (max_it) else "Measurements"
@@ -343,110 +345,16 @@ class DynamicModel:
                 )
             # Add Push Forward Data to the plot
             if plot_samples:
-                n_sample_ts = len(df[df["sample_flag"]])
-                cols = [f"q_lam_{i}" for i in range(n_states * n_sample_ts)]
-                max_samples = len(self.samples[iteration])
-                to_plot = n_samples if n_samples < max_samples else n_samples
-                rand_idxs = random.choices(range(max_samples), k=to_plot)
-                sub_samples = self.samples[iteration][cols].loc[rand_idxs]
-                for i, sample in enumerate(sub_samples.iterrows()):
-                    sample_df = pd.DataFrame(
-                        np.array(
-                            [
-                                df["ts"][df["sample_flag"]].values,
-                                np.array(sample[1]).reshape((n_sample_ts, n_states))[
-                                    :, state_idx
-                                ],
-                            ]
-                        ).T,
-                        columns=["ts", f"q_lam_{state_idx}"],
-                    )
-                    sample_df["sample_flag"] = df["sample_flag"]
-                    label = f"Samples ({to_plot} random)"
-                    label = (
-                        None if (i != (to_plot - 1) | iteration != max_it) else label
-                    )
-                    plot_vals = sample_df
-                    if iteration != max_it:
-                        plot_vals = sample_df[
-                            sample_df["ts"]
-                            <= sample_df["ts"][sample_df["sample_flag"] == True].max()
-                        ]
-                    sns.lineplot(
-                        x="ts",
-                        y=f"q_lam_{state_idx}",
-                        legend=False,
-                        ax=ax,
-                        color="purple",
-                        marker="o",
-                        data=plot_vals,
-                        alpha=0.2,
-                        label=label,
-                    )
-                    # sns.scatterplot(
-                    #     x="ts",
-                    #     y=f'q_lam_{state_idx}',
-                    #     legend=False,
-                    #     ax=ax,
-                    #     color="purple",
-                    #     data=sample_df[sample_df['sample_flag'] == True],
-                    #     alpha=0.2,
-                    #     marker='o',
-                    # )
-                # TODO: implement best and worst plots if columns present
-                s_it = self.samples[iteration]
-                if "best_flag" in s_it.columns is not None:
-                    best_sample = s_it[s_it["best_flag"] == True][cols]
-                    best_df = pd.DataFrame(
-                        np.array(
-                            [
-                                df["ts"].values,
-                                np.array(best_sample).reshape(n_ts, n_states)[
-                                    :, state_idx
-                                ],
-                            ]
-                        ).T,
-                        columns=["ts", f"q_lam_{state_idx}"],
-                    )
-                    best_df["sample_flag"] = df["sample_flag"]
-                    label = None if iteration != (len(self.data)) else "Best Sample"
-                    sns.lineplot(
-                        x="ts",
-                        y=f"q_lam_{state_idx}",
-                        legend=False,
-                        ax=ax,
-                        color="purple",
-                        data=best_df,
-                        linestyle="--",
-                        alpha=0.5,
-                        label=label,
-                    )
-                    sns.scatterplot(
-                        x="ts",
-                        y=f"q_lam_{state_idx}",
-                        legend=False,
-                        ax=ax,
-                        color="purple",
-                        data=best_df[best_df["sample_flag"] == True],
-                        alpha=0.2,
-                        marker="o",
-                    )
-                # sns.lineplot(
-                #     x="ts",
-                #     y=f"worst_{i}",
-                #     ax=axes[i],
-                #     color="purple",
-                #     data=state_df,
-                #     linestyle=":",
-                #     alpha=0.5,
-                #     label="Worst Sample",
-                # )
+                self.plot_sample_states(
+                    iteration=iteration, state_idx=state_idx,
+                    n_samples=n_samples, ax=ax,
+                    label=False if iteration != max_it else True)
 
             if window_type == "line":
                 ax.axvline(
                     df["ts"].min(),
                     linestyle="--",
-                    color="green",
+                    color="cyan",
                     alpha=1,
                     label=None,
                 )
@@ -488,8 +396,61 @@ class DynamicModel:
         plt.tight_layout()
 
         return ax
+    
+    def plot_sample_states(self,
+                            iteration=0,
+                            state_idx=0,
+                            n_samples=10,
+                            ax=None,
+                            label=False,
+                            figsize=(9, 8)):
+        """
+        """
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=figsize)
+        
+        sample_df = self.samples[iteration]
+        cols = [x for x in sample_df.columns if x.startswith("q_lam_")]
+        times = self.data[iteration]["ts"][self.data[iteration]["sample_flag"]].values
+        max_samples = len(sample_df)
+        n_samples = n_samples if n_samples < max_samples else max_samples
+        rand_idxs = random.choices(range(max_samples), k=n_samples)
+        plot_data = sample_df[cols].to_numpy().reshape(
+            max_samples, len(times), -1)[rand_idxs, :, state_idx].reshape(-1, len(times))
 
-    def plot_states(self, base_size=5):
+        label = None if not label else f"Samples ({n_samples} random)"
+        for i, d in enumerate(plot_data):
+            sns.lineplot(
+                x=times,
+                y=d,
+                legend=False,
+                color="purple",
+                marker="o",
+                alpha=0.2,
+                label=None if i != (n_samples - 1) else label,
+                ax=ax,
+            )
+
+        if "best_flag" in sample_df.columns is not None:
+            best_sample = np.where(sample_df["best_flag"] == True)[0]
+            plot_data = sample_df[cols].to_numpy().reshape(
+                max_samples, len(times), -1)[best_sample, :, state_idx].reshape(-1, len(times))
+
+            sns.lineplot(
+                x=times,
+                y=plot_data[0],
+                legend=False,
+                color="green",
+                linestyle="--",
+                marker="o",
+                alpha=0.8,
+                label=None if label is None else "Best Sample",
+                ax=ax,
+            )
+
+
+    def plot_states(self, base_size=5, **kwargs):
+
         """
         Plot states over time
         """
@@ -500,7 +461,7 @@ class DynamicModel:
             figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
         )
         for i, ax in enumerate(ax.flat):
-            self.plot_state(state_idx=i, ax=ax)
+            self.plot_state(state_idx=i, ax=ax, **kwargs)
             ax.set_title(f"State {i}: Temporal Evolution")
 
     def plot_iterations(self, base_size=5):
@@ -550,6 +511,7 @@ class DynamicModel:
             num_samples=num_samples, scale=diff
         )
         best_flag = np.empty((num_samples, 1), dtype=bool)
+        self.check_overwrite(attr="probs", overwrite=True)
         for it, t in enumerate(time_windows):
             logger.info(f"Starting iteration from {self.t0} to {t}")
             forward_res = self.forward_solve(t, samples=samples)
@@ -557,11 +519,38 @@ class DynamicModel:
                 forward_res["samples"], forward_res["data"],
                 self.measurement_noise, pi_in=pi_in
             )
+            logger.debug(f'Problem dists upon init: {prob.dists}')
             sp = search_params if isinstance(search_params, dict) else search_params[it]
-            prob.solve_search(**sp)
-            logger.info(f"Solution {prob.result}")
-            best_flag[:] = False
-            best_flag[prob.mud_arg] = True
-            self.samples[it]["best_flag"] = best_flag
-            self.probs.append(prob)
-            samples = prob.sample_dist(num_samples=num_samples)
+            try:
+                prob.solve_search(**sp)
+            except RuntimeError as r:
+                if "No solution found" in str(r):
+                    logger.error(f"No solution found at iteration {it}. Quitting")
+                    self.samples = self.samples[:-1]
+                    self.data = self.data[:-1]
+                    raise r
+            else:
+                logger.info(f"Solution {prob.result}")
+                best_flag[:] = False
+                best_flag[prob.mud_arg] = True
+                self.samples[it]["best_flag"] = best_flag
+                self.probs.append(prob)
+                samples = prob.sample_dist(num_samples=num_samples, dist="pi_up")
+                pi_in = prob.dists['pi_up']
+
+    
+    def check_overwrite(self, attr='probs', overwrite=False):
+        """
+        """
+        # See if probs and data already exist, if so prompt user to continue if we want to delete them to start fresh
+        already_yes = False
+        attr_val = getattr(self, attr)
+        if len(attr_val) > 0:
+            if not overwrite and not already_yes:
+                logger.warning(
+                    "This model already has a set of samples/data/probs. Continuing will delete these and start fresh."
+                )
+                if not already_yes:
+                    if input("Continue? (y/n): ") != "y":
+                        return
+            setattr(self, attr, [])

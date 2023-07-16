@@ -144,7 +144,7 @@ class PCAMUDProblem(MUDProblem):
         max_nc = max_nc if max_nc < min_shape else min_shape
 
         # Standarize and perform linear PCA
-        logger.info(f"Computing PCA using {max_nc} components")
+        logger.debug(f"Computing PCA using {max_nc} components")
         sc = StandardScaler()
         pca = PCA(n_components=max_nc)
         X_train = pca.fit_transform(sc.fit_transform(residuals))
@@ -153,7 +153,7 @@ class PCAMUDProblem(MUDProblem):
             "vecs": pca.components_,
             "var": pca.explained_variance_,
         }
-        logger.info(f"PCA Variance: {pca.explained_variance_}")
+        logger.debug(f"PCA Variance: {pca.explained_variance_}")
 
         # Compute Q_PCA
         self.q_lam = residuals @ pca.components_.T
@@ -253,7 +253,8 @@ class PCAMUDProblem(MUDProblem):
             # Make even number of splits of all qoi if mask is not specified
             pca_mask = np.arange(self.n_qoi) if pca_mask is None else pca_mask
             pca_splits = [
-                range(x[0], x[-1]) for x in np.array_split(pca_mask, pca_splits)
+                range(x[0], x[-1] + 1) for x in np.array_split(pca_mask, pca_splits)
+
             ]
         elif isinstance(pca_splits, list):
             if pca_mask is not None:
@@ -261,9 +262,17 @@ class PCAMUDProblem(MUDProblem):
                     "Cannot specify both pca_mask and non-integer pca_splits"
                 )
         iterations = [(i, j) for i in pca_splits for j in pca_components]
+        prev_in = self.dists['pi_in']
         for i, (pca_mask, pca_cs) in enumerate(iterations):
             str_val = pca_mask if pca_mask is not None else "ALL"
-            logger.info(f"Solving using ({str_val}, {pca_cs})")
+            logger.info(f"Iteration {i}: Solving using ({str_val}, {pca_cs})")
+
+            # TODO: Make sure this fixes all cases
+            # ! Problem: Setting weights erases pi_in, and when
+            # ! We are doing online iteration, this whipes our previously compute pi_up
+            # ! So we suffer from sampling error twice on each iteration....
+            # ! Fix for now is to change set_weights() to only whipe dists dictionary
+            # ! on first iteration since first iteration passes in [] for weights
             self.set_weights(weights)
             try:
                 self.solve(
@@ -284,6 +293,15 @@ class PCAMUDProblem(MUDProblem):
                 else:
                     logger.info(f"({i}): KDE estimation failed - str({k})")
                     failed = True
+            except LinAlgError as l:
+                # * Thrown when pdf() method fails on pi_in from another iteration
+                if i == 0:
+                    l.msg = "Unknown linalg error on first iteration."
+                    raise l
+                else:
+                    logger.info(f"({i}): PDF on constructed kde failed. " +
+                                f"Highly correlated data, or curse of dim - str({l})")
+                    failed = True
             else:
                 e_r = self.result["e_r"].values[0]
                 if (diff := np.abs(e_r - 1.0)) > exp_thresh or failed:
@@ -293,6 +311,8 @@ class PCAMUDProblem(MUDProblem):
             if failed:
                 logger.info(f"Resetting to last solution at {iterations[i-1]}")
                 self.set_weights(weights[:-1])
+                self.dists["pi_in"] = prev_in
+                logger.debug(f"dists: {self.dists}")
                 self.solve(
                     pca_mask=iterations[i - 1][0],
                     pca_components=iterations[i - 1][1],
@@ -312,6 +332,7 @@ class PCAMUDProblem(MUDProblem):
                 if i != len(iterations) - 1:
                     logger.info("Updating weights")
                     weights.append(self.state["ratio"].values)
+                    prev_in = self.dists['pi_in']
 
         self.it_results = pd.concat(it_results)
         self.result = self.it_results.iloc[[-1]]
@@ -353,14 +374,22 @@ class PCAMUDProblem(MUDProblem):
                 logger.info(f"Solving with args:\n{args}")
 
                 # Solve -> Saves states in state dictionary
-                self.solve_it(**args, state_extra={"search_index": idx})
+                try:
+                    self.solve_it(**args, state_extra={"search_index": idx})
+                except ZeroDivisionError or KDEError as e:
+                    logger.error(f"Failed: Ill-posed problem: {e}")
+                except RuntimeError as r:
+                    if "No solution found within exp_thresh" in str(r):
+                        logger.error(f"Failed: No solution in exp_thresh: {r}")
+                else:
+                    # ! What state do we need to whipe here to ensure back to original conditions of search on next iteration?
+                    # Store results per each iteration and final result
+                    # This will be erased the next iteration if we don't store it
+                    all_search_results.append(self.it_results.copy())
+                    all_search_results[-1]["index"] = idx
+                    all_results.append(self.result.copy())
+                    all_results[-1]["index"] = idx
 
-                # Store results per each iteration and final result
-                # This will be erased the next iteration if we don't store it
-                all_search_results.append(self.it_results.copy())
-                all_search_results[-1]["index"] = idx
-                all_results.append(self.result.copy())
-                all_results[-1]["index"] = idx
                 bar()
 
         # Parse DataFrame with results of mud estimations for each ts choice
@@ -387,7 +416,7 @@ class PCAMUDProblem(MUDProblem):
         self.result = res_df[res_df[best_method]]
 
         if len(self.result) == 0:
-            raise RuntimeError('No solution found within exp_thresh: {res_df}')
+            raise RuntimeError(f'No solution found within exp_thresh')
         else:
             # Re-solve Using Best
             self.solve_it(**search_list[self.result['index'].values[0]])
@@ -395,15 +424,14 @@ class PCAMUDProblem(MUDProblem):
     def plot_L(
         self,
         iteration=-1,
-        nc=None,
         lam_true=None,
-        mud_point=None,
         df=None,
         param_idx=0,
         param_col="lam",
         ratio_col="ratio",
         weight_col="weight",
         plot_initial=True,
+        plot_mud=False,
         plot_legend=True,
         ax=None,
         figsize=(6, 6),
@@ -444,7 +472,6 @@ class PCAMUDProblem(MUDProblem):
 
         ax, labels = super().plot_L(
             lam_true=lam_true,
-            mud_point=mud_point,
             df=df,
             param_idx=param_idx,
             param_col=param_col,
@@ -452,6 +479,7 @@ class PCAMUDProblem(MUDProblem):
             weight_col=weight_col,
             plot_initial=plot_initial,
             plot_legend=plot_legend,
+            plot_mud=plot_mud,
             ax=ax,
             figsize=figsize,
         )
@@ -565,8 +593,8 @@ class PCAMUDProblem(MUDProblem):
 
     def param_density_plots(
         self,
-        nc=None,
         lam_true=None,
+        plot_mud=True,
         base_size=4,
         max_np=9,
     ):
@@ -581,14 +609,13 @@ class PCAMUDProblem(MUDProblem):
 
         lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
         for i, ax in enumerate(ax.flat):
-            self.plot_L(nc=nc, param_idx=i, lam_true=lam_true, ax=ax)
+            self.plot_L(param_idx=i, lam_true=lam_true, ax=ax, plot_mud=plot_mud)
             ax.set_title(f"$\lambda_{i}$")
 
-        result= self.result if nc is None or self.pca_results is None else self.pca_results.loc[[nc]]
         fig.suptitle(
             self._parse_title(
-                result=result,
-                nc=nc,
+                result=self.result,
+                nc=True,
                 lam_true=lam_true,
             )
         )

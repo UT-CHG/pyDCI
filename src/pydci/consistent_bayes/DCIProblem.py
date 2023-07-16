@@ -166,7 +166,7 @@ class DCIProblem(object):
             "pi_pf": None,
         }
         self.result = None
-
+    
     def pi_in(self, values=None):
         """
         Evaluate the initial distribution.
@@ -304,7 +304,7 @@ class DCIProblem(object):
         else:
             dim = self.n_params if dist in ["pi_in", "pi_up"] else self.n_states
             if self.dists[dist] is None:
-                _ = getattr(self, dist, None)()
+                _ = getattr(self, dist, None)(np.zeros(dim))
             if not isinstance(self.dists[dist], gaussian_kde):
                 return self.dists[dist].rvs((num_samples, dim)).T
             else:
@@ -346,11 +346,13 @@ class DCIProblem(object):
             # Multiply weights column wise for stacked weights
             w = np.prod(w, axis=0)
 
+            # If non-zero weights set, whipe saved distributions
+            self.dists["pi_in"] = None
+            self.dists["pi_pr"] = None
+            self.dists["pi_up"] = None
+            self.dists["pi_pf"] = None
+
         self.state["weight"] = w
-        self.dists["pi_in"] = None
-        self.dists["pi_pr"] = None
-        self.dists["pi_up"] = None
-        self.dists["pi_pf"] = None
 
     def solve(self):
         """
@@ -707,6 +709,7 @@ class DCIProblem(object):
         base_size=4,
         max_np=9,
     ):
+        # TODO: Add explicit figsize argument.
         base_size = 4
         n_params = self.n_params if self.n_params <= max_np else max_np
         grid_plot = closest_factors(n_params)

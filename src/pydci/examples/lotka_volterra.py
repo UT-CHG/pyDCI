@@ -2,6 +2,7 @@
 Lotka-Volterra (Predator-Prey) System
 """
 import matplotlib.pyplot as plt
+import pandas as pd
 import numpy as np
 import seaborn as sns
 from scipy.integrate import odeint
@@ -25,6 +26,7 @@ LV_P2 = [
 ]
 
 LV_PARAM_MINS = 4 * [0.0]
+LV_STATE_MINS = 5.0
 
 
 def lotka_volterra_system(
@@ -85,6 +87,7 @@ class LotkaVolterraModel(DynamicModel):
             sample_ts=sample_ts,
             measurement_noise=measurement_noise,
             param_mins=LV_PARAM_MINS,
+            state_mins=LV_STATE_MINS,
             **kwargs,
         )
 
@@ -102,15 +105,17 @@ class LotkaVolterraModel(DynamicModel):
         """
         return odeint(lotka_volterra_system, x0, times, args=parameter_samples)
 
-    def plot_states(self):
+    def plot_states(self,
+                    **kwargs):
         """
         Plot states over time
         """
         fig, ax = plt.subplots(2, 1, figsize=(12, 8))
         title = ["Predator", "Prey"]
         for i, ax in enumerate(ax.flat):
-            self.plot_state(state_idx=i, ax=ax)
+            self.plot_state(state_idx=i, ax=ax, **kwargs)
             ax.set_title(f"{i}: {title[i]} Temporal Evolution")
+            ax.set_ylim(ax.get_ylim()[0], 1.1*pd.concat(self.data)[f'q_lam_true_{i}'].max()) 
 
     def plot_true_phase_space(
         self,

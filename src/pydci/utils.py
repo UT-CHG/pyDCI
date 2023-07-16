@@ -45,12 +45,19 @@ def gkde(X, weights=None, label=None):
         res = gaussian_kde(X, weights=weights)
     except (LinAlgError, ValueError) as e:
         if "array must not contain infs or NaNs" in str(e):
+            # TODO: Explain what this error means in message
             msg = "scipy gaussian KDE failed because weights too small"
             raise KDEError(X, weights=weights, name=label, msg=msg)
         elif "data appears to lie in a lower-dimensional" in str(e):
             msg = "scipy gaussian KDE failed - Degenerative data covariance."
             msg += "Can mean weights are too small or too few samples."
-            raise KDEError(X, weights=weights, name=label, msg=msg)
+            raise KDEError(X, weights=weights, name=label, msg=msg) 
+        elif "leading minor of the array is not positive definite" in str(e):
+            # TODO: Explain what this error means in message
+            raise KDEError(X, weights=weights, name=label, msg=str(e)) 
+        elif "Matrix is not positive definite" in str(e):
+            # TODO: Explain what this error means in message
+            raise KDEError(X, weights=weights, name=label, msg=str(e)) 
         else:
             raise e
     else:

@@ -165,14 +165,13 @@ class MUDProblem(DCIProblem):
         if state_df is None:
             state_df = self.state
         m = np.argmax(state_df["pi_up"])
-        mud_point = get_df(state_df.loc[[m]], "lam", size=self.n_params)
+        mud_point = get_df(state_df.iloc[[m]], "lam", size=self.n_params)
         return m, mud_point
         
 
     def plot_L(
         self,
         lam_true=None,
-        mud_point=None,
         df=None,
         param_idx=0,
         param_col="lam",
@@ -180,6 +179,7 @@ class MUDProblem(DCIProblem):
         weight_col="weight",
         plot_initial=True,
         plot_legend=True,
+        plot_mud=True,
         ax=None,
         figsize=(6, 6),
     ):
@@ -236,16 +236,17 @@ class MUDProblem(DCIProblem):
             )
             labels.append(lam_true_label)
 
-        mud_point = mud_point if mud_point is not None else self.get_mud_point(df)[1][0]
-        mud_label = f"$\lambda^{{MUD}}_{param_idx} = " + f"{mud_point[param_idx]:.4f}$"
-        ax.axvline(
-            x=mud_point[param_idx],
-            linewidth=3,
-            color="green",
-            linestyle="--",
-            label=mud_label,
-        )
-        labels.append(mud_label)
+        if plot_mud:
+            mud_point = self.get_mud_point(df)[1][0]
+            mud_label = f"$\lambda^{{MUD}}_{param_idx} = " + f"{mud_point[param_idx]:.4f}$"
+            ax.axvline(
+                x=mud_point[param_idx],
+                linewidth=3,
+                color="green",
+                linestyle="--",
+                label=mud_label,
+            )
+            labels.append(mud_label)
 
         if plot_legend:
             ax.legend(
