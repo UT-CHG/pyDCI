@@ -222,7 +222,7 @@ class DynamicModel:
             len(samples),
             title="Solving model sample set:",
             force_tty=True,
-            receipt=True,
+            receipt=False,
             length=20,
         ) as bar:
             for j, s in enumerate(samples):
@@ -394,9 +394,15 @@ class DynamicModel:
                     all_search_results[-1]["index"] = idx
                     all_results.append(prob.result.copy())
                     all_results[-1]["index"] = idx
-                    probs.append(prob)
 
+                probs.append(prob)
                 bar()
+        
+        if len(all_results) == 0:
+            return {'best': None,
+                    'probs': probs,
+                    'search_results': None,
+                    'all_search_results': None}
 
         # Parse DataFrame with results of mud estimations for each ts choice
         res_df = pd.concat(all_results)
@@ -423,7 +429,10 @@ class DynamicModel:
         best = None if len(result) == 0 else probs[result['index'].values[0]]
 
         # Return best found, results for each tried, and iterative breakdown of each try
-        return {'best': best, 'search_results': search_results, 'all_search_results': all_search_results}
+        return {'best': best,
+                'probs': probs,
+                'search_results': search_results,
+                'all_search_results': all_search_results}
 
 
     def get_search_combinations(self,
@@ -507,6 +516,7 @@ class DynamicModel:
             'best_method': 'max_kl',
         },
         diff=0.5,
+        kl_thresh=3.0,
     ):
         """
         Online solve
@@ -538,11 +548,12 @@ class DynamicModel:
         max_its = it + num_its
         best_flag = np.empty((num_samples, 1), dtype=bool)
         while it < max_its:
+            logger.debug(f"Iteration {it} from {(it-1)*time_step} to {it*time_step}")
             if it > len(self.data):
-                # logger.info(f"Getting data for iteration {it}")
-                self.get_data(it*time_step)
+                logger.debug(f"Getting {int(time_step/self.sample_ts)}. data for iteration {it}")
+                self.get_data(time_step)
 
-            self.forward_solve(samples)
+            self.forward_solve(samples, restart=True)
             search_combs = self.get_search_combinations(
                 **comb_args,
             )
@@ -553,14 +564,28 @@ class DynamicModel:
                 **search_args,
             )
             if res['best'] is None:
-                avg_kl = np.mean(res['search_results']['kl'])
-                logger.info(f'No solution found within exp_thresh: {res}')
-                return res
-                # logger.info(f'Suspected shift in params at {it}: KL Divergence: {avg_kl}')
-                # pi_in, samples = self.get_uniform_initial_samples(num_samples=num_samples, scale=diff)
-                # bad_res.append((it, res))
+                shift = False
+                reason = ''
+                if res['search_results'] is not None:
+                    avg_kl = np.mean(res['search_results']['kl'])
+                    logger.info(f'No solution found within exp_thresh: {res}')
+                    if avg_kl > kl_thresh:
+                        shift = True
+                    reason = f'Avg. KL Divergence > threshold: {avg_kl}'
+                else:
+                    shift = True
+                    reason = f'No solution found amongst search options.'
+
+                if shift:
+                    logger.info(f'Suspected shift in params at {it}.\n{reason}')
+                    pi_in, samples = self.get_uniform_initial_samples(num_samples=num_samples, scale=diff)
+                else:
+                    logger.info(f'KL Divergence within threshold: {avg_kl}.' +
+                                 'No shift but bad E(r). Skipping interval.')
+                    self.probs.append(res)
+                    it += 1
             else:
-                # logger.info(f"Best solution found:{res['best'].result}")
+                logger.info(f"Best solution found:{res['best'].result}")
                 self.probs.append(res['best'])
                 best_flag[:] = False
                 best_flag[res['best'].mud_arg] = True
@@ -948,15 +973,16 @@ class DynamicModel:
         if len(idxs) > 2:
             alphas = np.linspace(0.1,0.9,len(idxs))
             for i, j in enumerate(idxs[1:-1]):
-                _, l = probs[j].plot_L(ax=ax,
-                                param_idx=param_idx,
-                                initial_kwargs=None,
-                                update_kwargs={"color": "blue", "alpha": alphas[i], "linestyle": "--", "fill": False},
-                                plot_legend=False,
-                                mud_kwargs=None,
-                                lam_true=None
-                )
-                labels += [f'$\pi^{{up}}_{{{j}}}$']
+                if isinstance(probs[j], PCAMUDProblem):
+                    _, l = probs[j].plot_L(ax=ax,
+                                    param_idx=param_idx,
+                                    initial_kwargs=None,
+                                    update_kwargs={"color": "blue", "alpha": alphas[i], "linestyle": "--", "fill": False},
+                                    plot_legend=False,
+                                    mud_kwargs=None,
+                                    lam_true=None
+                    )
+                    labels += [f'$\pi^{{up}}_{{{j}}}$']
         # plot update at final iteration
         _, l = probs[idxs[-1]].plot_L(ax=ax,
                         param_idx=param_idx,
