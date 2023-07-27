@@ -32,16 +32,20 @@ interval_colors = sns.color_palette("muted", n_colors=50)
 # plt.rcParams["text.latex.preamble"] = r"\usepackage{bm}"
 # plt.rcParams["text.latex.preamble"] = r"\usepackage{amsfonts}"
 #
-# params = {
-#     "axes.labelsize": 6,
-#     "axes.titlesize": 6,
-#     "xtick.labelsize": 6,
-#     "ytick.labelsize": 6,
-#     "axes.titlepad": 1,
-#     "axes.labelpad": 1,
-#     "font.size": 12,
-# }
-# plt.rcParams.update(params)
+DEF_RC_PARAMS = {
+    "mathtext.fontset": "stix",
+    "font.family": "STIXGeneral",
+    "axes.labelsize": 16,
+    "axes.titlesize": 22,
+    "legend.fontsize": 16,
+    "xtick.labelsize": 14,
+    "ytick.labelsize": 14,
+    "axes.titlepad": 1,
+    "axes.labelpad": 1,
+    "font.size": 16,
+    "savefig.facecolor": "white",
+}
+plt.rcParams.update(DEF_RC_PARAMS)
 
 
 def _parse_title(

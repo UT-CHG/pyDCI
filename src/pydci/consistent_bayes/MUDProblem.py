@@ -179,7 +179,9 @@ class MUDProblem(DCIProblem):
         weight_col="weight",
         plot_initial=True,
         plot_legend=True,
-        plot_mud=True,
+        mud_kwargs={},
+        initial_kwargs={},
+        update_kwargs={},
         ax=None,
         figsize=(6, 6),
     ):
@@ -218,9 +220,25 @@ class MUDProblem(DCIProblem):
             weight_col=weight_col,
             plot_initial=plot_initial,
             plot_legend=plot_legend,
+            initial_kwargs=initial_kwargs,
+            update_kwargs=update_kwargs,
             ax=ax,
             figsize=figsize,
         )
+
+        if mud_kwargs is not None:
+            mud_point = self.get_mud_point(df)[1][0]
+            mud_label = f"$\lambda^{{MUD}}_{param_idx} = " + f"{mud_point[param_idx]:.4f}$"
+            mud_args = dict(
+                x=mud_point[param_idx],
+                linewidth=3,
+                color="green",
+                linestyle="--",
+                label=mud_label,
+            )
+            mud_args.update(mud_kwargs)
+            ax.axvline(**mud_args)
+            labels.append(mud_label)
 
         # Generate vertical lines for true values
         if lam_true is not None:
@@ -235,18 +253,6 @@ class MUDProblem(DCIProblem):
                 label=lam_true_label,
             )
             labels.append(lam_true_label)
-
-        if plot_mud:
-            mud_point = self.get_mud_point(df)[1][0]
-            mud_label = f"$\lambda^{{MUD}}_{param_idx} = " + f"{mud_point[param_idx]:.4f}$"
-            ax.axvline(
-                x=mud_point[param_idx],
-                linewidth=3,
-                color="green",
-                linestyle="--",
-                label=mud_label,
-            )
-            labels.append(mud_label)
 
         if plot_legend:
             ax.legend(

@@ -63,6 +63,12 @@ def gkde(X, weights=None, label=None):
     else:
         return res
 
+def set_seed(seed: int = None):
+    """
+    Set seed for numpy random number generator
+    """
+    if seed is not None:
+        np.random.seed(seed)
 
 def add_noise(signal: ArrayLike, sd: float = 0.05, seed: int = None):
     """
@@ -98,8 +104,7 @@ def add_noise(signal: ArrayLike, sd: float = 0.05, seed: int = None):
     """
     signal = np.array(signal)
 
-    if seed is not None:
-        np.random.seed(seed)
+    set_seed(seed)
 
     # Populate qoi_true with noise
     noise = np.random.randn(signal.size) * sd
@@ -248,3 +253,15 @@ def generate_combinations(args_dict: Dict[str, List[Any]]) -> List[Dict[str, Any
     values = args_dict.values()
     combinations = list(product(*values))
     return [dict(zip(keys, combination)) for combination in combinations]
+
+
+def get_l2_errs(res_df, true_vals):
+    """
+    Compute l2 error and relative error for each row in res_df
+
+    """
+    mud_vals = get_df(res_df, 'lam_MUD', len(true_vals))
+    l2_errs = np.linalg.norm(mud_vals - np.array(true_vals), axis=1)
+    res_df['l2_err'] = l2_errs
+    res_df['rel_err'] = l2_errs/np.linalg.norm(np.array(true_vals))
+    return res_df

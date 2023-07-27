@@ -226,6 +226,7 @@ class PCAMUDProblem(MUDProblem):
 
     def solve_it(
         self,
+        weights=None,
         pca_components=[[0]],
         pca_mask: List[int] = None,
         pca_splits: List[int] = 1,
@@ -243,7 +244,7 @@ class PCAMUDProblem(MUDProblem):
         ----------
         """
         it_results = []
-        weights = []
+        weights = [] if weights is None else weights
         failed = False
         if exp_thresh <= 0:
             msg = f"Expected ratio thresh must be a float > 0: {exp_thresh}"
@@ -263,16 +264,12 @@ class PCAMUDProblem(MUDProblem):
                 )
         iterations = [(i, j) for i in pca_splits for j in pca_components]
         prev_in = self.dists['pi_in']
+        if len(iterations) == 0:
+            raise ValueError(f'No iterations specified: {pca_splits}, {pca_mask}')
         for i, (pca_mask, pca_cs) in enumerate(iterations):
             str_val = pca_mask if pca_mask is not None else "ALL"
             logger.info(f"Iteration {i}: Solving using ({str_val}, {pca_cs})")
 
-            # TODO: Make sure this fixes all cases
-            # ! Problem: Setting weights erases pi_in, and when
-            # ! We are doing online iteration, this whipes our previously compute pi_up
-            # ! So we suffer from sampling error twice on each iteration....
-            # ! Fix for now is to change set_weights() to only whipe dists dictionary
-            # ! on first iteration since first iteration passes in [] for weights
             self.set_weights(weights)
             try:
                 self.solve(
@@ -294,7 +291,8 @@ class PCAMUDProblem(MUDProblem):
                     logger.info(f"({i}): KDE estimation failed - str({k})")
                     failed = True
             except LinAlgError as l:
-                # * Thrown when pdf() method fails on pi_in from another iteration
+                # * Thrown when pdf() method fails on pi_in from previous iteration
+                # TODO: Should we raise this error if on first iteration? Test this error better
                 if i == 0:
                     l.msg = "Unknown linalg error on first iteration."
                     raise l
@@ -306,6 +304,8 @@ class PCAMUDProblem(MUDProblem):
                 e_r = self.result["e_r"].values[0]
                 if (diff := np.abs(e_r - 1.0)) > exp_thresh or failed:
                     logger.info(f"|E(r) - 1| = {diff} > {exp_thresh} - Stopping")
+                    if i == 0:
+                        raise RuntimeError('No solution found within exp_thresh')
                     failed = True
 
             if failed:
@@ -337,90 +337,6 @@ class PCAMUDProblem(MUDProblem):
         self.it_results = pd.concat(it_results)
         self.result = self.it_results.iloc[[-1]]
 
-    def solve_search(
-        self,
-        search_list,
-        def_args = None,
-        exp_thresh: float = 0.5,
-        best_method: str = "closest",
-    ):
-        """
-        Search through different iterations of solvign the PCA problem
-
-        Parameters
-        ----------
-        """
-        am = ["closest", "min_kl", "max_kl"]
-        if best_method not in am:
-            msg = f"Unrecognized best method {best_method}. Allowed: {am}"
-            logger.error(msg)
-            raise ValueError(msg)
-        if exp_thresh <= 0:
-            msg = f"Expected ratio thresh must be a float > 0: {exp_thresh}"
-            logger.error(msg)
-            raise ValueError(msg)
-
-        all_search_results = []
-        all_results = []
-        with alive_bar(
-            len(search_list),
-            title="Solving for different combinations",
-            force_tty=True,
-            receipt=True,
-            length=40,
-        ) as bar:
-            for idx, args in enumerate(search_list):
-                args.update(def_args if def_args is not None else {})
-                logger.info(f"Solving with args:\n{args}")
-
-                # Solve -> Saves states in state dictionary
-                try:
-                    self.solve_it(**args, state_extra={"search_index": idx})
-                except ZeroDivisionError or KDEError as e:
-                    logger.error(f"Failed: Ill-posed problem: {e}")
-                except RuntimeError as r:
-                    if "No solution found within exp_thresh" in str(r):
-                        logger.error(f"Failed: No solution in exp_thresh: {r}")
-                else:
-                    # ! What state do we need to whipe here to ensure back to original conditions of search on next iteration?
-                    # Store results per each iteration and final result
-                    # This will be erased the next iteration if we don't store it
-                    all_search_results.append(self.it_results.copy())
-                    all_search_results[-1]["index"] = idx
-                    all_results.append(self.result.copy())
-                    all_results[-1]["index"] = idx
-
-                bar()
-
-        # Parse DataFrame with results of mud estimations for each ts choice
-        res_df = pd.concat(all_results)
-        res_df["predict_delta"] = np.abs(res_df["e_r"] - 1.0)
-        res_df["within_thresh"] = res_df["predict_delta"] <= exp_thresh
-        res_df["closest"] = np.logical_and(
-            res_df["predict_delta"]
-            <= res_df[res_df["within_thresh"]]["predict_delta"].min(),
-            res_df["within_thresh"],
-        )
-        res_df["max_kl"] = np.logical_and(
-            res_df["kl"] >= res_df[res_df["within_thresh"]]["kl"].max(),
-            res_df["within_thresh"],
-        )
-        res_df["min_kl"] = np.logical_and(
-            res_df["kl"] <= res_df[res_df["within_thresh"]]["kl"].min(),
-            res_df["within_thresh"],
-        )
-
-        # Set to best
-        self.search_results = res_df
-        self.all_search_results = pd.concat(all_search_results)
-        self.result = res_df[res_df[best_method]]
-
-        if len(self.result) == 0:
-            raise RuntimeError(f'No solution found within exp_thresh')
-        else:
-            # Re-solve Using Best
-            self.solve_it(**search_list[self.result['index'].values[0]])
-
     def plot_L(
         self,
         iteration=-1,
@@ -431,8 +347,10 @@ class PCAMUDProblem(MUDProblem):
         ratio_col="ratio",
         weight_col="weight",
         plot_initial=True,
-        plot_mud=False,
         plot_legend=True,
+        initial_kwargs={},
+        update_kwargs={},
+        mud_kwargs={},
         ax=None,
         figsize=(6, 6),
     ):
@@ -479,7 +397,9 @@ class PCAMUDProblem(MUDProblem):
             weight_col=weight_col,
             plot_initial=plot_initial,
             plot_legend=plot_legend,
-            plot_mud=plot_mud,
+            initial_kwargs=initial_kwargs,
+            update_kwargs=update_kwargs,
+            mud_kwargs=mud_kwargs,
             ax=ax,
             figsize=figsize,
         )
@@ -594,9 +514,9 @@ class PCAMUDProblem(MUDProblem):
     def param_density_plots(
         self,
         lam_true=None,
-        plot_mud=True,
         base_size=4,
         max_np=9,
+        **kwargs,
     ):
         base_size = 4
         n_params = self.n_params if self.n_params <= max_np else max_np
@@ -609,7 +529,7 @@ class PCAMUDProblem(MUDProblem):
 
         lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
         for i, ax in enumerate(ax.flat):
-            self.plot_L(param_idx=i, lam_true=lam_true, ax=ax, plot_mud=plot_mud)
+            self.plot_L(param_idx=i, lam_true=lam_true, ax=ax, **kwargs)
             ax.set_title(f"$\lambda_{i}$")
 
         fig.suptitle(

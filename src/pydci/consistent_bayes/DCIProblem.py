@@ -35,7 +35,6 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from numpy.typing import ArrayLike
-from rich.table import Table
 from scipy.stats import rv_continuous  # type: ignore
 from scipy.stats import entropy, gaussian_kde
 from scipy.stats.distributions import norm
@@ -44,9 +43,11 @@ from sklearn.preprocessing import StandardScaler  # type: ignore
 
 from pydci.log import disable_log, enable_log, log_table, logger
 from pydci.utils import KDEError, fit_domain, get_df, gkde, put_df, set_shape, closest_factors
+from pydci.plotting import DEF_RC_PARAMS
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
+plt.rcParams.update(DEF_RC_PARAMS)
 
 __author__ = "Carlos del-Castillo-Negrete"
 __copyright__ = "Carlos del-Castillo-Negrete"
@@ -432,6 +433,8 @@ class DCIProblem(object):
         ratio_col="ratio",
         weight_col="weight",
         plot_initial=True,
+        initial_kwargs={},
+        update_kwargs={},
         plot_legend=True,
         ax=None,
         figsize=(6, 6),
@@ -481,20 +484,9 @@ class DCIProblem(object):
         bright_colors = sns.color_palette("bright", n_colors=self.n_params)
         # deep_colors = sns.color_palette("deep", n_colors=self.n_params)
 
-        pi_up_label = f"$\pi^{{up}}_{{\lambda_{param_idx}}}$"
-        sns.kdeplot(
-            data=df,
-            x=f"{param_col}_{param_idx}",
-            ax=ax,
-            fill=True,
-            color=bright_colors[param_idx],
-            label=pi_up_label,
-            weights=df[weight_col] * df[ratio_col],
-        )
-        labels.append(pi_up_label)
-        if plot_initial:
+        if initial_kwargs is not None:
             pi_in_label = f"$\pi^{{in}}_{{\lambda_{param_idx}}}$"
-            sns.kdeplot(
+            init_args = dict(
                 data=df,
                 x=f"{param_col}_{param_idx}",
                 ax=ax,
@@ -504,10 +496,30 @@ class DCIProblem(object):
                 label=pi_in_label,
                 weights=weight_col,
             )
+            init_args.update(initial_kwargs)
+            sns.kdeplot(**init_args)
             labels.append(pi_in_label)
 
+        if update_kwargs is not None:
+            pi_up_label = f"$\pi^{{up}}_{{\lambda_{param_idx}}}$"
+            update_args = dict(
+                data=df,
+                x=f"{param_col}_{param_idx}",
+                ax=ax,
+                fill=True,
+                color=bright_colors[param_idx],
+                label=pi_up_label,
+                weights=df[weight_col] * df[ratio_col],
+            )
+            update_args.update(update_kwargs)
+            sns.kdeplot(
+                **update_args
+            )
+            labels.append(pi_up_label)
+
+
         # Set plot specifications
-        ax.set_xlabel(r"$\Lambda$", fontsize=12)
+        ax.set_xlabel(f"$\lambda_{param_idx}$", fontsize=12)
         if plot_legend:
             ax.legend(
                 labels=labels,
@@ -707,7 +719,9 @@ class DCIProblem(object):
         self,
         lam_true=None,
         base_size=4,
-        max_np=9,
+        max_np=8,
+        figsize=(14, 6),
+        lam_kwargs=None,
     ):
         # TODO: Add explicit figsize argument.
         base_size = 4
@@ -716,12 +730,17 @@ class DCIProblem(object):
         fig, ax = plt.subplots(
             grid_plot[0],
             grid_plot[1],
-            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
+            figsize=(grid_plot[0] * (base_size + 2),
+                     grid_plot[0] * base_size) if figsize is None else figsize,
         )
 
         lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
+        lam_kwargs = {} if lam_kwargs is None else lam_kwargs
         for i, ax in enumerate(ax.flat):
-            self.plot_L(param_idx=i, lam_true=lam_true, ax=ax)
+            plot_args = dict(param_idx=i, lam_true=lam_true, ax=ax)
+            if i in lam_kwargs.keys():
+                plot_args.update(lam_kwargs[i])
+            self.plot_L(**plot_args)
 
         fig.suptitle(self._parse_title(lam_true=lam_true))
         fig.tight_layout()

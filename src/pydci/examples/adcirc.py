@@ -118,13 +118,13 @@ def plot_state(data, samples=None, mask=None, plot_intervals=None):
     fig, ax = plt.subplots(1, 1, figsize=(12, 7))
 
     mask = data.index.values if mask is None else mask
-    sns.lineplot(data.iloc[mask], x="ts", y="q_lam_true_0", label="True State", ax=ax)
+    sns.lineplot(data.iloc[mask], x="ts", y="q_lam_true_0", label="True", linestyle='--', ax=ax)
     sns.scatterplot(
         data.iloc[mask],
         x="ts",
         y="q_lam_obs_0",
         marker="*",
-        label="Observed State",
+        label="Observed",
         ax=ax,
     )
 
@@ -142,7 +142,7 @@ def plot_state(data, samples=None, mask=None, plot_intervals=None):
                 samples.iloc[[i]][cols].values.T, columns=[f"q_lam_s={i}"]
             )
             to_plot["ts"] = data.iloc[mask]["ts"].values
-            label = None if idx != num_plot - 1 else "Samples"
+            label = None if idx != num_plot - 1 else "Predicted"
             sns.lineplot(
                 to_plot,
                 x="ts",
@@ -217,6 +217,8 @@ def plot_iterations(prob, max_plot=10, plot_idxs=None, lam_true=None):
     ax[1].legend()
     ax[0].set_xlabel("$\lambda_1$")
     ax[1].set_xlabel("$\lambda_2$")
+
+    return ax
 
 
 def process_result(prob, lam_true, times):

@@ -12,35 +12,34 @@ SEIRS_PARAM_MINS = [0, 0, 0, 0]
 # For periodic behavior
 R_0 = 3.0
 
-# Sample every week
-SEIRS_SAMPLE_TS = 7
+# Daily infection counts
+# Simluate batches of weekly data.
+SEIRS_SAMPLE_TS = 1
 
 # Populations are all from 0-1 -> Fraction of population
 SEIRS_NOISE = 0.005
 
 # Parameters from bjornstad2020seirs paper
 SEIRS_P1 = [
-    3.0 / 14.0,  # beta transmission rate
-    1.0
-    / 7.0,  # sigma incubation rate i.e. rate at which exposed hosts become infected - 1 week
+    R_0 / 14.0,  # beta transmission rate - R_0 / gamma -> R_0 > 0 for periodic behavior
+    1.0 / 7.0,  # sigma incubation rate i.e. rate at which exposed hosts become infected - 1 week
     1.0 / 14.0,  # gamma  mean recovery rate - 2 weeks
     1.0 / 365.0,  # xi - loss off imunity rate - 1 year
 ]
 
-
-# (1) Policy Lockdown: => Slower Transmission Rate(beta) - Time 25
+# (1) Policy Lockdown 1 month in: => Slower Transmission Rate(beta) - Time 75
 SEIRS_P2 = [
-    0.3,  # beta
-    0.25,  # sigma
-    0.1,  # gamma
-    0.1,  # xi
+    0.5 * R_0 / 14.0,  # transmission rate halved
+    1.0 / 7.0,  # sigm
+    1.0 / 14.0,
+    1.0 / 365.0,
 ]
-# (2) Virus Mutation: => Faster Incubation Rate (sigma) - Time 75
+# (2) Virus Mutation 1 year in: => Faster Incubation Rate (sigma) - Time 150
 SEIRS_P3 = [
-    0.3,  # beta
-    0.3,  # sigma
-    0.15,  # gamma
-    0.1,  # xi
+    0.5 * R_0 / 14.0,  # transmission rate halved
+    1.0 / 3.5,   # Incubation rate halved -> Exposed hosts become infected quicker
+    1.0 / 14.0,
+    1.0 / 365.0,
 ]
 
 SEIRS_X0 = [
@@ -91,6 +90,7 @@ class SEIRSModel(DynamicModel):
         solve_ts=0.1,
         sample_ts=SEIRS_SAMPLE_TS,
         measurement_noise=SEIRS_NOISE,
+        state_idxs = [2], # Only observe infected state
         **kwargs
     ):
         super().__init__(
@@ -100,6 +100,7 @@ class SEIRSModel(DynamicModel):
             sample_ts=sample_ts,
             measurement_noise=measurement_noise,
             param_mins=SEIRS_PARAM_MINS,
+            state_idxs=state_idxs,
             **kwargs
         )
 
@@ -109,10 +110,26 @@ class SEIRSModel(DynamicModel):
         """
         return odeint(seir_system, x0, times, args=parameter_samples)
 
-    def plot_states(self):
+    def plot_states(self, plot_samples: bool = False):
         """
         Plot states over time
         """
         fig, ax = plt.subplots(4, 1, figsize=(18, 16))
+        state_labels = ["Susceptible", "Exposed", "Infected", "Recovered"]
         for i, ax in enumerate(ax.flat):
             self.plot_state(state_idx=i, ax=ax)
+            ax.set_title(f'{state_labels[i]}')
+            ax.set_ylabel("Fraction of Population")
+            ax.set_xlabel("Time (Days)")
+
+
+    def plot_infected(self, **kwargs):
+        """
+        Plot infected population over time 
+        """
+        ax = self.plot_state(state_idx=2, **kwargs)
+        ax.set_ylabel('Fraction of Population')
+        ax.set_xlabel('Days')
+        ax.set_title('Infected Population')
+
+        return ax
