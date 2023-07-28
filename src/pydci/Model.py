@@ -22,7 +22,7 @@ from numpy.linalg import LinAlgError
 
 from pydci.log import log_table, logger, enable_log, disable_log
 from pydci.utils import add_noise, get_df, get_uniform_box, \
-    put_df, set_shape, KDEError, set_seed
+    put_df, set_shape, KDEError, set_seed, closest_factors
 from pydci import PCAMUDProblem
 
 
@@ -162,13 +162,18 @@ class DynamicModel:
         # TODO: Need this?
         sample_ts_flag[-1] = True
         # sample_ts_flag[0] = True if len(self.data) == 0 else False
-        sample_ts_idxs = np.where(sample_ts_flag)[0]
         measurements = np.empty((len(ts), self.n_sensors))
+        logger.debug(f'Shapes: {measurements.shape}, {true_vals.shape}, {sample_ts_flag.shape}')
         measurements[:] = np.nan
         measurements[sample_ts_flag] = np.reshape(
-            add_noise(true_vals[sample_ts_flag, self.state_idxs].ravel(), self.measurement_noise),
+            add_noise(true_vals[sample_ts_flag][:,self.state_idxs].ravel(), self.measurement_noise),
             (sum(sample_ts_flag), self.n_sensors)
         )
+        # WOrked with others but not heat model. Check above works with others
+        # measurements[sample_ts_flag] = np.reshape(
+        #     add_noise(true_vals[sample_ts_flag, self.state_idxs].ravel(), self.measurement_noise),
+        #     (sum(sample_ts_flag), self.n_sensors)
+        # )
 
         x0_temp = self.x0
         self.t0 = ts[sample_ts_flag][-1]
@@ -187,7 +192,7 @@ class DynamicModel:
         else:
             self.t0, self.x0 = t0_store, x0_store
             return data_df
-    
+
     def forward_solve(self, samples, restart=False, data_idx=-1):
         """
         Forward Model Solve
@@ -823,7 +828,7 @@ class DynamicModel:
                 ax.axvline(
                     df["ts"].min(),
                     linestyle="--",
-                    color="green",
+                    color="cyan",
                     alpha=0.5,
                     label=None,
                 )
@@ -853,8 +858,8 @@ class DynamicModel:
             ax.axvline(
                 self.data[iterations[-1]]["ts"].max(),
                 linestyle="--",
-                color="green",
-                alpha=0.5,
+                color="cyan",
+                alpha=0.8,
                 label="Time Interval",
             )
         ax.legend(fontsize=12)
@@ -928,7 +933,7 @@ class DynamicModel:
         """
         Plot states over time
         """
-        grid_plot = self._closest_factors(self.n_states)
+        grid_plot = closest_factors(self.n_states)
         fig, ax = plt.subplots(
             grid_plot[0],
             grid_plot[1],
@@ -942,7 +947,7 @@ class DynamicModel:
         """
         Plot states over time
         """
-        grid_plot = self._closest_factors(self.n_params)
+        grid_plot = closest_factors(self.n_params)
         fig, ax = plt.subplots(
             grid_plot[0],
             grid_plot[1],
@@ -994,11 +999,12 @@ class DynamicModel:
         )
         labels += [f'$\pi^{{up}}$', '$\lambda^{mud}$']
         for l in lam_true:
+            colors = ["orange", "brown", "purple"]
             if len(l) == 2:
                 ax.axvline(
                     x=l[1][param_idx],
                     linewidth=3,
-                    color="orange",
+                    color=colors[l[0]],
                 )
                 labels += [f'$\lambda^{{\dagger}}_{{{l[0]}}}$']
             else:
@@ -1033,3 +1039,95 @@ class DynamicModel:
         
         return axs
     # plot_iterations(probs, idxs=np.arange(0, 10, 2), lam_true=[SEIRS_P2])
+
+    def e_r_plot(self, probs, e_r_thresh=None, x_vals=None, x_label='Iteration', ax=None):
+        """
+        Plot the expected ratio
+        """
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(12, 6))
+
+        e_r = [p.expected_ratio() for p in probs]
+        x_vals = np.arange(len(e_r)) if x_vals is None else x_vals
+
+        sns.lineplot(x=x_vals, y=e_r, ax=ax, label='Iterative Expected Ratio', marker="o")
+        xlims = ax.get_xlim()
+        if e_r_thresh is not None:
+            ax.hlines([1 + e_r_thresh, 1 - e_r_thresh], xmin=xlims[0], xmax=xlims[1], color='blue', linestyle=':', label='Threshold $|1 - \mathbb{E}(r)|$')
+        ax.hlines([1], xmin=xlims[0], xmax=xlims[1], color='black', linestyle=':', label='Predictability Assumption $\mathbb{E}(r)$ ≈ 1')
+        ax.set_xlabel(x_label)
+        ax.set_ylabel('$\mathbb{E}(r)$')
+
+    def kl_plot(self, probs, kl_thresh=None, x_vals=None, x_label='Iteration', ax=None):
+        """
+        Plot the expected ratio
+        """
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(12, 6))
+
+        d_kl = [p.divergence_kl() for p in probs]
+        x_vals = np.arange(len(d_kl)) if x_vals is None else x_vals
+
+        sns.lineplot(x=x_vals, y=d_kl, color='green', ax=ax, label='$\mathrm{KL}(\pi^{up}_i | \pi^{up}_{i-1})$', marker="o")
+        if kl_thresh is not None:
+            ax.hlines([kl_thresh], xmin=xlims[0], xmax=xlims[1], color='orange', linestyle=':', label='KL Threshold')
+
+        ax.set_xlabel(x_label)
+        ax.set_ylabel('$\mathrm{KL}()$')
+
+        return ax
+
+    def kl_delta_plot(self, probs, kl_thresh=None, x_vals=None, x_label='Iteration', ax=None):
+        """
+        Plot the expected ratio
+        """
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(12, 6))
+
+        d_kl = [p.divergence_kl() for p in probs]
+        kl_delta = np.abs(np.array(d_kl[1:]) - np.array(d_kl[:-1]))
+        x_vals = np.arange(1, len(kl_delta) + 1) if x_vals is None else x_vals
+
+        label = '$\Delta \mathrm{KL}(\pi^{up}_i | \pi^{up}_{i-1})$'
+        sns.lineplot(x=x_vals, y=kl_delta, color='purple', ax=ax, label=label, marker="o")
+
+        if kl_thresh is not None:
+            ax.hlines([kl_thresh], xmin=xlims[0], xmax=xlims[1], color='orange', linestyle=':', label='KL Threshold')
+
+        ax.set_xlabel('Iteration')
+        ax.set_ylabel('$\Delta \mathrm{KL}()$')
+
+        return ax
+
+    def joint_metrics_plot(self, probs, e_r_thresh=None, kl_thresh=None, y1='e_r', y2='kl', x_vals=None, x_label='Iteration', ax=None):
+        """
+        Plot the expected ratio and KL divergence metrics for a set of problems
+        """
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # Check y1 and y1 are iwthin set ['e_r', 'kl', 'kl_delta']
+        if y1 not in ['e_r', 'kl', 'kl_delta'] or y2 not in ['e_r', 'kl', 'kl_delta']:
+            raise ValueError('y1 and y2 must be in set ["e_r", "kl", "kl_delta"]')
+        if y1 == y2:
+            raise ValueError('y1 and y2 must be different')
+
+        e_r = [p.expected_ratio() for p in probs]
+        d_kl = [p.divergence_kl() for p in probs]
+
+        axs = [ax]
+        for i, y in enumerate([y1, y2]):
+            if i > 0:
+                ax = ax.twinx()
+                axs.append(ax)
+            if y == 'e_r':
+                e_r_plot(probs, e_r_thresh=e_r_thresh, x_vals=x_vals, x_label=x_label, ax=ax)
+            if y == 'kl':
+                kl_plot(probs, kl_thresh=kl_thresh, x_vals=x_vals, x_label=x_label, ax=ax)
+            if y == 'kl_delta':
+                kl_delta_plot(probs, kl_thresh=kl_thresh, x_vals=x_vals, x_label=x_label, ax=ax)
+
+        axs[0].legend(loc='upper left')
+        axs[1].legend(loc='upper right')
+
+        return axs

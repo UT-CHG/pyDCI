@@ -16,11 +16,11 @@ from scipy.stats.distributions import norm, uniform
 from pydci.log import logger
 from pydci.Model import DynamicModel
 
-pyvsita_flag = False
+pyvista_flag = False
 try:
     import pyvista
 
-    pyvsita_flag = True
+    pyvista_flag = True
 except ImportError as ie:
     logger.warning("Pyvista not found")
 
@@ -71,6 +71,7 @@ class HeatModel(DynamicModel):
         nmodes=4,
         true_k_x=None,
         max_states=500,
+        forcing_expression=None,
     ):
         self.nx = nx
         self.ny = ny
@@ -84,8 +85,10 @@ class HeatModel(DynamicModel):
             return np.exp(-a * (x[0] ** 2 + x[1] ** 2))
 
         self.initial_condition = def_init if x0 is None else x0
+        self.forcing_expression = forcing_expression
 
         # Setup simulation
+        logger.debug('Setting up simulation')
         self.setup_simulation(true_k_x=true_k_x)
 
         # Note we set a dummy lam_true for now because when we set thermal
@@ -102,41 +105,6 @@ class HeatModel(DynamicModel):
             param_shifts=None,
             max_states=max_states,
         )
-
-    def _create_variational_problem(self, params=None):
-        """
-        Build Variational Problem
-
-        This is called on each run of `run_model()` to reset the parameters
-        of the simulation as necessary.
-        """
-        params = self.lam_ture if params is None else params
-        proj_vals = self.reconstruct(params, log=True)
-        kx = fem.Function(self.V)
-        kx.x.array[:] = proj_vals
-
-        u, v = ufl.TrialFunction(self.V), ufl.TestFunction(self.V)
-        f = fem.Constant(self.domain, PETSc.ScalarType(0))
-        a = (
-            u * v * ufl.dx
-            + self.solve_ts * kx * ufl.dot(ufl.grad(u), ufl.grad(v)) * ufl.dx
-        )
-        L = (self.u_n + self.solve_ts * f) * v * ufl.dx
-
-        # Prepare linear algebra objects
-        self.bilinear_form = fem.form(a)
-        self.linear_form = fem.form(L)
-
-        A = fem.petsc.assemble_matrix(self.bilinear_form, bcs=[self.boundary_condition])
-        A.assemble()
-        self.b = fem.petsc.create_vector(self.linear_form)
-
-        # Petsc solver
-        solver = PETSc.KSP().create(self.domain.comm)
-        solver.setOperators(A)
-        solver.setType(PETSc.KSP.Type.PREONLY)
-        solver.getPC().setType(PETSc.PC.Type.LU)
-        self.solver = solver
 
     def project(self, field=None, mean=None, log=True):
         """
@@ -273,63 +241,95 @@ class HeatModel(DynamicModel):
         else:
             return rf.reconstruct_kl(self.modes[1], projection, mean=mean)
 
-    def run_model(self, params=None, fname=None, sample_ts=None):
+    def _create_variational_problem(self, params=None):
         """
-        Run the model with the given set of parameters and return snapshots of
-        the solution as a Pandas DataFrame.
+        Build Variational Problem
+
+        This is called on each run of `run_model()` to reset the parameters
+        of the simulation as necessary.
+        """
+        logger.debug('Constructing k_x field')
+        params = self.lam_true if params is None else params
+        proj_vals = self.reconstruct(params, log=True)
+        kx = fem.Function(self.V)
+        kx.x.array[:] = proj_vals
+
+        logger.debug('Assembling bilinear form')
+        u, v = ufl.TrialFunction(self.V), ufl.TestFunction(self.V)
+        a = (
+            u * v * ufl.dx
+            + self.solve_ts * kx * ufl.dot(ufl.grad(u), ufl.grad(v)) * ufl.dx
+        )
+        self.bilinear_form = fem.form(a)
+        A = fem.petsc.assemble_matrix(self.bilinear_form, bcs=[self.boundary_condition])
+        A.assemble()
+
+        logger.debug('Assembling linear form')
+        if self.forcing_expression is None:
+            self.f = fem.Constant(self.domain, 0.0)
+            L = (self.u_n + self.solve_ts * self.f) * v * ufl.dx
+        else:
+            self.f = self.forcing_expression
+            self.f.t = 0.0
+            self.w = fem.Function(self.V)
+            L = (self.u_n + self.solve_ts * self.w) * v * ufl.dx
+            self.w.interpolate(self.f.eval)
+
+        self.linear_form = fem.form(L)
+        self.b = fem.petsc.create_vector(self.linear_form)
+
+        # Petsc solver
+        logger.debug('Initializing solver')
+        solver = PETSc.KSP().create(self.domain.comm)
+        solver.setOperators(A)
+        solver.setType(PETSc.KSP.Type.PREONLY)
+        solver.getPC().setType(PETSc.PC.Type.LU)
+        self.solver = solver
+        
+    def forward_model(
+        self,
+        x0: List[float],
+        times: np.ndarray,
+        lam: np.ndarray,
+        fname=None,
+        sample_ts=0.1,
+    ) -> np.ndarray:
+        """
+        Forward Model
+
+        Stubb meant to be overwritten by inherited classes.
 
         Parameters
         ----------
-        params : ndarray, optional
-            Parameters to use for thermal diffusivity k_x
-        fname : str, optional
-            Name of file to save the snapshots as an XDMF file.
-        sample_ts : float, optional
-            Time interval between snapshots.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Concatenated Pandas DataFrame of snapshots of the solution.
-
-        Raises
-        ------
-        RuntimeError
-            If `params` is not provided.
-
-        Example
-        -------
-        >>> from HeatModel import HeatModel
-        >>> import pandas as pd
-        >>> model = HeatModel()
-        >>> snapshots = model.run_model()
-        >>> isinstance(snapshots, pd.DataFrame)
-        True
+        x0 : List[float]
+            Initial conditions.
+        times: np.ndarray[float]
+            Time steps to solve the model for. Note that times[0] the model
+            is assumed to be at state x0.
+        parmaeters: Tuple
+            Tuple of parameters to set for model run. These should correspond
+            to the model parameters being varied.
         """
-        self._create_variational_problem(params)
-
         if fname is not None:
             xdmf = io.XDMFFile(self.domain.comm, fname, "w")
             xdmf.write_mesh(self.domain)
+            snap_counter = 0.0
 
-        snapshots = []
-        sample_ts = self.sample_ts if sample_ts is None else sample_ts
+        # Set initial conditions (how to do?)
+        self.u_n.x.array[:] = np.array(x0).ravel()
+        self.uh.x.array[:] = np.array(x0).ravel()
 
-        def take_snap(u):
-            snapshots.append(
-                pd.DataFrame(
-                    np.array(u).T,
-                    columns=[f"t_{len(snapshots)}"],
-                )
-            )
+        # Create variational problme to solve given thermal diff. field lam
+        self._create_variational_problem(np.array(lam))
 
-        take_snap(self.uh.x.array.copy())
-        snap_counter = 0.0
+        sol = np.zeros((len(times), self.n_states))
+        for i, t in enumerate(times):
+            sol[i] = self.uh.x.array.copy().ravel()
 
-        num_steps = int(self.T / self.solve_ts)
-        for i in range(num_steps):
-            self.t += self.solve_ts
-            snap_counter += self.solve_ts
+            # Update forcing
+            if self.forcing_expression is not None:
+                self.f.t = t
+                self.w.interpolate(self.f.eval)
 
             # Update the right hand side reusing the initial vector
             with self.b.localForm() as loc_b:
@@ -351,18 +351,35 @@ class HeatModel(DynamicModel):
 
             # Update solution at previous time step (u_n)
             self.u_n.x.array[:] = self.uh.x.array
-            if snap_counter >= sample_ts:
-                take_snap(self.uh.x.array.copy())
-                snap_counter = 0.0
-                if fname is not None:
-                    xdmf.write_function(self.uh, self.t)
 
-        snapshots = pd.concat(snapshots, axis=1)
+            if fname is not None:
+                if snap_counter >= sample_ts:
+                    snap_counter += self.solve_ts
+                    snap_counter = 0.0
+                    if fname is not None:
+                        xdmf.write_function(self.uh, self.t)
 
         if fname is not None:
             xdmf.close()
 
-        return snapshots
+        return sol
+
+    def take_snaps(self, data_df, sample_ts=0.01):
+        """
+        Take snapshots of data at a given time interval.
+        Snapshots consist of data frame with columns t_{i} for 
+        each time step to be ploted, and each row being a specific
+        index in the grid.
+        """
+        remainder = data_df['ts'] % sample_ts
+
+        # Select rows where the remainder is close to zero (within a small tolerance)
+        data = data_df[remainder < 1e-4]
+        times = [f't_{i}' for i, t in enumerate(data['ts'])]
+        true_cols = [col for col in data.columns if col.startswith('q_lam_true')]
+        data = data[true_cols].values.T
+
+        return pd.DataFrame(data, columns=times)
 
     def _init_axis(self, **kwargs):
         """
@@ -500,119 +517,6 @@ class HeatModel(DynamicModel):
 
         plotter.close()
 
-    def run_samples(self, nsamples=1, params=None, out_file=None):
-        """
-        Run parameter samples
-
-        Given a model configuration dictionary, initializes a HeatModel instance with the
-        specified parameters, sets up the simulation, generates a data-set for parameter
-        estimation by running the model with specified parameters or randomly generated ones.
-
-        Parameters
-        ----------
-        model_config : dict
-            Dictionary containing the parameters for initializing a HeatModel instance.
-        nsamples : int, optional
-            Number of samples to generate for the data-set. Default is 1.
-        params : numpy.ndarray or list of numpy.ndarray, optional
-            Array of shape (nsamples, heat_model.nmodes) specifying the parameters to use
-            for running the model. If None, random parameters are generated. If a list of
-            numpy.ndarray is provided, each array must have the shape (heat_model.nmodes,),
-            and the corresponding model runs are performed with each set of parameters.
-            Default is None.
-        out_file : str, optional
-            File path for saving the output data-set as a CSV file. If None, the output is
-            returned as a pandas DataFrame. Default is None.
-
-        Returns
-        -------
-        heat_model : HeatModel
-            The initialized HeatModel instance.
-        params : numpy.ndarray or list of numpy.ndarray
-            The randomly generated or provided parameters used for running the model.
-        all_res : pandas.DataFrame or str
-            The resulting data-set as a pandas DataFrame or the file path to the saved CSV file.
-        """
-        if params is None:
-            params = np.random.normal(0, 1, [nsamples, self.nmodes])
-        else:
-            params = [params] if not isinstance(params, list) else params
-
-        all_res = []
-        with alive_bar(len(params), force_tty=True) as bar:
-            for param in params:
-                self.t = 0
-                self.u_n.interpolate(initial_condition)
-                self.uh.interpolate(initial_condition)
-                all_res.append(self.run_model(param))
-                bar()
-
-        sample_keys = [f"s_{x}" for x in range(len(params))]
-        all_res = pd.concat(all_res, keys=sample_keys)
-
-        if out_file is not None:
-            all_res.to_csv(out_file, index=True)
-            return params, out_file
-        else:
-            return params, all_res
-
-    def forward_model(
-        self,
-        x0: List[float],
-        times: np.ndarray,
-        lam: np.ndarray,
-        fname=None,
-    ) -> np.ndarray:
-        """
-        Forward Model
-
-        Stubb meant to be overwritten by inherited classes.
-
-        Parameters
-        ----------
-        x0 : List[float]
-            Initial conditions.
-        times: np.ndarray[float]
-            Time steps to solve the model for. Note that times[0] the model
-            is assumed to be at state x0.
-        parmaeters: Tuple
-            Tuple of parameters to set for model run. These should correspond
-            to the model parameters being varied.
-        """
-        # Set initial conditions (how to do?)
-        self.u_n.x.array[:] = np.array(x0).ravel()
-        self.uh.x.array[:] = np.array(x0).ravel()
-
-        # Create variational problme to solve given thermal diff. field lam
-        self._create_variational_problem(np.array(lam))
-
-        sol = np.zeros((len(times), self.n_states))
-        for i, t in enumerate(times):
-            sol[i] = self.uh.x.array.copy().ravel()
-
-            # Update the right hand side reusing the initial vector
-            with self.b.localForm() as loc_b:
-                loc_b.set(0)
-            fem.petsc.assemble_vector(self.b, self.linear_form)
-
-            # Apply Dirichlet boundary condition to the vector
-            fem.petsc.apply_lifting(
-                self.b, [self.bilinear_form], [[self.boundary_condition]]
-            )
-            self.b.ghostUpdate(
-                addv=PETSc.InsertMode.ADD_VALUES, mode=PETSc.ScatterMode.REVERSE
-            )
-            fem.petsc.set_bc(self.b, [self.boundary_condition])
-
-            # Solve linear problem
-            self.solver.solve(self.b, self.uh.vector)
-            self.uh.x.scatter_forward()
-
-            # Update solution at previous time step (u_n)
-            self.u_n.x.array[:] = self.uh.x.array
-
-        return sol
-
     def k_x_mud_plot(self, iteration=0, figsize=(18, 5)):
         """
         Plot estimated and True k(x)
@@ -630,81 +534,3 @@ class HeatModel(DynamicModel):
         ax[2].set_title("Error")
         ax[2].set_ylabel("")
         fig.tight_layout
-
-
-# def parallel_run(model_configs, num_samples=10, workers=4):
-#     """
-#     """
-#     res = []
-#     with alive_bar(len(param_samples), force_tty=True) as bar:
-#         with concurrent.futures.ThreadPoolExecutor(
-#             max_workers=workers) as executor:
-#             futures = []
-#             for idx, m in enumerate(model_configs):
-#                 futures.append(executor.submit(
-#                   setup_and_run, m, num_samples, idx))
-#             for future in concurrent.futures.as_completed(futures):
-#                 fname = future.result()
-#                 data = pd.read_csv(fname, index_col=False)
-#                 data['index'] = data.index
-#                 res.append(data)
-#                 Path(fname).unlink()
-#                 bar()
-#
-#     res = pd.concat(res, keys=[f's_{x}' for x in range(num_samples)])
-#
-#     return res
-#    def setup_and_run(model_config, nsamples=1, params=None, out_file=None):
-#        """
-#        Setup and run
-#
-#        Given a model configuration dictionary, initializes a HeatModel instance with the
-#        specified parameters, sets up the simulation, generates a data-set for parameter
-#        estimation by running the model with specified parameters or randomly generated ones.
-#
-#        Parameters
-#        ----------
-#        model_config : dict
-#            Dictionary containing the parameters for initializing a HeatModel instance.
-#        nsamples : int, optional
-#            Number of samples to generate for the data-set. Default is 1.
-#        params : numpy.ndarray or list of numpy.ndarray, optional
-#            Array of shape (nsamples, heat_model.nmodes) specifying the parameters to use
-#            for running the model. If None, random parameters are generated. If a list of
-#            numpy.ndarray is provided, each array must have the shape (heat_model.nmodes,),
-#            and the corresponding model runs are performed with each set of parameters.
-#            Default is None.
-#        out_file : str, optional
-#            File path for saving the output data-set as a CSV file. If None, the output is
-#            returned as a pandas DataFrame. Default is None.
-#
-#        Returns
-#        -------
-#        heat_model : HeatModel
-#            The initialized HeatModel instance.
-#        params : numpy.ndarray or list of numpy.ndarray
-#            The randomly generated or provided parameters used for running the model.
-#        all_res : pandas.DataFrame or str
-#            The resulting data-set as a pandas DataFrame or the file path to the saved CSV file.
-#        """
-#        heat_model = HeatModel(**model_config)
-#        heat_model.setup_simulation()
-#        if params is None:
-#            params = np.random.normal(0, 1, [nsamples, heat_model.nmodes])
-#        else:
-#            params = [params] if not isinstance(params, list) else params
-#
-#        all_res = []
-#        with alive_bar(len(params), force_tty=True) as bar:
-#            for param in params:
-#                heat_model.reset_sim()
-#                all_res.append(heat_model.run_model(param))
-#                bar()
-#
-#        all_res = pd.concat(all_res, keys=[f"s_{x}" for x in range(len(params))])
-#
-#        if out_file is not None:
-#            all_res.to_csv(out_file, index=True)
-#            return heat_model, params, out_file
-#        else:
-#            return heat_model, params, all_res
