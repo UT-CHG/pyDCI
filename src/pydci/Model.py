@@ -319,20 +319,6 @@ class DynamicModel:
         """
         raise NotImplementedError("forward_model() base class skeleton.")
 
-    def forward_model(
-        self,
-        x0,
-        times,
-        lam,
-    ):
-        """
-        Forward model model base function -> To be overwritten
-
-        TODO:
-            - Document
-        """
-        raise NotImplementedError("forward_model() base class skeleton.")
-
     def solve_search(
         self,
         search_list,
