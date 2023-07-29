@@ -388,7 +388,7 @@ class DynamicModel:
 
                 probs.append(prob)
                 bar()
-        
+
         if len(all_results) == 0:
             return {'best': None,
                     'probs': probs,
@@ -424,7 +424,6 @@ class DynamicModel:
                 'probs': probs,
                 'search_results': search_results,
                 'all_search_results': all_search_results}
-
 
     def get_search_combinations(self,
                                 data_idx=-1,
@@ -491,7 +490,7 @@ class DynamicModel:
                     if input("Continue? (y/n): ") != "y":
                         return
             setattr(self, attr, [])
-    
+
     def online_iterative(
         self,
         num_its=1,
@@ -511,7 +510,7 @@ class DynamicModel:
     ):
         """
         Online solve
-        
+
         If problem has not been initialized (no self.probs[] array), then the problem
         is initialized with a uniform distribution over the parameter space around the
         true value, with a scale of `diff` controlling the size of the uniform distribution
@@ -522,8 +521,6 @@ class DynamicModel:
         be determined by the `best_method` argument.
 
         """
-        bad_res = []
-
         if len(self.probs) == 0:
             logger.info(f'Initializing problem with difficulty {diff} and {num_samples}')
             pi_in, samples = self.get_uniform_initial_samples(
@@ -532,7 +529,7 @@ class DynamicModel:
             it = 1
         else:
             pi_in = self.probs[-1].dists['pi_up']
-            samples= self.probs[-1].sample_dist(num_samples=num_samples)
+            samples = self.probs[-1].sample_dist(num_samples=num_samples)
             it = len(self.probs)
             logger.info(f'Continuing at iteration {it} and timestep {self.t0}')
 
@@ -565,14 +562,15 @@ class DynamicModel:
                     reason = f'Avg. KL Divergence > threshold: {avg_kl}'
                 else:
                     shift = True
-                    reason = f'No solution found amongst search options.'
+                    reason = 'No solution found amongst search options:\n{search_combs}'
 
                 if shift:
                     logger.info(f'Suspected shift in params at {it}.\n{reason}')
-                    pi_in, samples = self.get_uniform_initial_samples(num_samples=num_samples, scale=diff)
+                    pi_in, samples = self.get_uniform_initial_samples(
+                        num_samples=num_samples, scale=diff)
                 else:
                     logger.info(f'KL Divergence within threshold: {avg_kl}.' +
-                                 'No shift but bad E(r). Skipping interval.')
+                                'No shift but bad E(r). Skipping interval.')
                     self.probs.append(res)
                     it += 1
             else:
@@ -581,7 +579,7 @@ class DynamicModel:
                 best_flag[:] = False
                 best_flag[res['best'].mud_arg] = True
                 self.samples[-1]["best_flag"] = best_flag
-                samples= self.probs[-1].sample_dist(num_samples=num_samples)
+                samples = self.probs[-1].sample_dist(num_samples=num_samples)
                 pi_in = self.probs[-1].dists['pi_up']
                 it += 1
 
@@ -621,7 +619,6 @@ class DynamicModel:
         time_windows.sort()
         if weights is not None and len(weights) != num_samples:
             raise ValueError(f"weights must be None or of length {num_samples}")
-
 
         logger.debug(f'Drawing {num_samples} samples from uniform +- {diff} around true value')
         pi_in, samples = self.get_uniform_initial_samples(
@@ -743,7 +740,6 @@ class DynamicModel:
 
         return sample_groups, probs
 
-        
     def plot_state(
         self,
         plot_true=True,
@@ -791,7 +787,7 @@ class DynamicModel:
             if plot_measurements and state_idx in self.state_idxs:
                 label = None if iteration != (max_it) else "Measurements"
                 # Get index of state_idx in list self.state_idxs
-                obs_idx= np.where(self.state_idxs == state_idx)[0][0]
+                obs_idx = np.where(self.state_idxs == state_idx)[0][0]
                 sns.scatterplot(
                     x="ts",
                     y=f"q_lam_obs_{obs_idx}",
@@ -942,7 +938,6 @@ class DynamicModel:
         for prob in len(self.probs):
             for i, ax in enumerate(ax.flat):
                 prob.plot_L(param_idx=i, ax=ax)
-                
 
     def plot_param_density(self, probs, param_idx=0, idxs=None, figsize=(5,5), lam_true=None, ax=None):
 
@@ -958,8 +953,7 @@ class DynamicModel:
                         update_kwargs=None,
                         plot_legend=False,
                         mud_kwargs=None,
-                        lam_true=None
-        )
+                        lam_true=None)
         labels += [f'$\pi^{{in}}$']
         if len(idxs) > 2:
             alphas = np.linspace(0.1,0.9,len(idxs))
