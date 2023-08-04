@@ -200,6 +200,8 @@ class PCAMUDProblem(MUDProblem):
             simulated data. If not specified, defaults to the min of the number
             of states and the number of parameters.
         """
+        pca_components = [pca_components] if isinstance(
+            pca_components, int) else pca_components
         self.q_pca(mask=pca_mask)
         all_qoi = self.q_lam
         self.q_lam = self.q_lam[:, pca_components]
@@ -339,14 +341,12 @@ class PCAMUDProblem(MUDProblem):
 
     def plot_L(
         self,
-        iteration=-1,
-        lam_true=None,
         df=None,
+        lam_true=None,
         param_idx=0,
         param_col="lam",
         ratio_col="ratio",
         weight_col="weight",
-        plot_initial=True,
         plot_legend=True,
         initial_kwargs={},
         update_kwargs={},
@@ -382,11 +382,11 @@ class PCAMUDProblem(MUDProblem):
             Tuple of (1) matplotlib axis object where distributions where
             plotted and (2) List of labels that were plotted, in order plotted.
         """
-        if self.pca_states is None:
-            df = self.state
-        else:
-            iterations = self.pca_states["iteration"].unique()
-            df = self.pca_states[self.pca_states["iteration"] == iterations[iteration]]
+        # if self.pca_states is None:
+        #     df = self.state
+        # else:
+        #     iterations = self.pca_states["iteration"].unique()
+        #     df = self.pca_states[self.pca_states["iteration"] == iterations[iteration]]
 
         ax, labels = super().plot_L(
             lam_true=lam_true,
@@ -395,7 +395,6 @@ class PCAMUDProblem(MUDProblem):
             param_col=param_col,
             ratio_col=ratio_col,
             weight_col=weight_col,
-            plot_initial=plot_initial,
             plot_legend=plot_legend,
             initial_kwargs=initial_kwargs,
             update_kwargs=update_kwargs,
@@ -408,7 +407,6 @@ class PCAMUDProblem(MUDProblem):
 
     def plot_D(
         self,
-        nc=None,
         df=None,
         state_idx=0,
         state_col="q_pca",
@@ -449,29 +447,30 @@ class PCAMUDProblem(MUDProblem):
         """
         if df is None:
             df = self.state
-            if nc is not None:
-                if nc > len(self.pca_results):
-                    msg = f"{nc} greater than max number of components used"
-                    logger.error(msg)
-                    raise ValueError(msg)
-                df = self.state.join(
-                    self.pca_states[self.pca_states["nc"] == nc][["ratio"]].add_suffix(
-                        f"_nc={nc}"
-                    )
-                )
-                ratio_col = f"ratio_nc={nc}"
+
         ax, labels = super().plot_D(
             df=df,
             state_idx=state_idx,
             state_col=state_col,
             ratio_col=ratio_col,
             weight_col=weight_col,
-            plot_obs=plot_obs,
+            plot_obs=False,
             plot_pf=plot_pf,
             plot_legend=plot_legend,
             ax=ax,
             figsize=figsize,
         )
+
+        if plot_obs:
+            # Plot N(0, 1) distribution over axis range using seaborn
+            x = np.linspace(*ax.get_xlim(), 100)
+            y = norm.pdf(x, loc=0, scale=1)
+            sns.lineplot(
+                x=x,
+                y=y, 
+                ax=ax,
+                label="$\pi^\mathrm{obs}_\mathcal{D} = \mathcal{N}(0, 1)$"
+            )
 
         return ax, labels
 
@@ -530,7 +529,7 @@ class PCAMUDProblem(MUDProblem):
         lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
         for i, ax in enumerate(ax.flat):
             self.plot_L(param_idx=i, lam_true=lam_true, ax=ax, **kwargs)
-            ax.set_title(f"$\lambda_{i}$")
+            ax.set_title(f"$\lambda_{{{i}}}$")
 
         fig.suptitle(
             self._parse_title(
@@ -539,34 +538,6 @@ class PCAMUDProblem(MUDProblem):
                 lam_true=lam_true,
             )
         )
-        fig.tight_layout()
-
-    def nc_param_density_plots(
-        self,
-        nc_mask=None,
-        param_idx=0,
-        lam_true=None,
-        base_size=4,
-        max_np=9,
-    ):
-        if nc_mask is None:
-            nc_mask = np.arange(1, len(self.pca_results) + 1)
-        nc = len(nc_mask)
-        nc = nc if nc <= max_np else max_np
-        grid_plot = closest_factors(nc)
-        fig, ax = plt.subplots(
-            grid_plot[0],
-            grid_plot[1],
-            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
-        )
-
-        lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
-        for i, ax in enumerate(ax.flat):
-            self.plot_L(nc=nc_mask[i], param_idx=param_idx, lam_true=lam_true, ax=ax)
-            result = self.pca_results.loc[[nc_mask[i]]]
-            ax.set_title(self._parse_title(result=result, lam_true=lam_true, nc=True))
-
-        fig.suptitle("MUD Estimates by Number of PCA Components Used")
         fig.tight_layout()
 
     def learned_qoi_plot(self, nc_mask=None):
@@ -584,7 +555,6 @@ class PCAMUDProblem(MUDProblem):
     def _parse_title(
         self,
         result=None,
-        nc=True,
         lam_true=None,
     ):
         """
@@ -592,7 +562,5 @@ class PCAMUDProblem(MUDProblem):
         """
         result = self.result if result is None else result
         title = super()._parse_title(result=result, lam_true=lam_true)
-        if nc:
-            title = f"nc = {result.index[0]}: " + title
 
         return title

@@ -47,7 +47,7 @@ class Monomial1D(Model.DynamicModel):
 class Monomial2D(Model.DynamicModel):
     def __init__(
         self,
-        p,
+        p=5,
         x0=[0, 0],  # Note in the constant monomial case, initial state won't matter
         lam_true=[0.3, 0.8],
         solve_ts=1.0,

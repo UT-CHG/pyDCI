@@ -167,7 +167,7 @@ class DCIProblem(object):
             "pi_pf": None,
         }
         self.result = None
-    
+
     def pi_in(self, values=None):
         """
         Evaluate the initial distribution.
@@ -432,7 +432,6 @@ class DCIProblem(object):
         param_col="lam",
         ratio_col="ratio",
         weight_col="weight",
-        plot_initial=True,
         initial_kwargs={},
         update_kwargs={},
         plot_legend=True,
@@ -457,8 +456,6 @@ class DCIProblem(object):
             Column in DataFrame storing the parameter values to use.
         ratio_col : str, default='ratio'
             Column in DataFrame storing the `ratio` to use.
-        plot_initial : bool, default=True
-            Whether to include the initial distribution `pi_in` in the plot.
         plot_legend: bool, default=True
             Whether to include a labeled legend in the plot. Note, labels of
             what is plotted are returned along with the axis object for
@@ -498,7 +495,7 @@ class DCIProblem(object):
             )
             init_args.update(initial_kwargs)
             sns.kdeplot(**init_args)
-            labels.append(pi_in_label)
+            labels.append(init_args['label'])
 
         if update_kwargs is not None:
             pi_up_label = f"$\pi^{{up}}_{{\lambda_{param_idx}}}$"
@@ -515,11 +512,10 @@ class DCIProblem(object):
             sns.kdeplot(
                 **update_args
             )
-            labels.append(pi_up_label)
-
+            labels.append(update_args['label'])
 
         # Set plot specifications
-        ax.set_xlabel(f"$\lambda_{param_idx}$", fontsize=12)
+        ax.set_xlabel(f"$\lambda_{param_idx}$")
         if plot_legend:
             ax.legend(
                 labels=labels,
@@ -632,7 +628,7 @@ class DCIProblem(object):
             labels.append(obs_label)
 
         # Set plot specifications
-        ax.set_xlabel(r"$\mathcal{D}$", fontsize=12)
+        ax.set_xlabel(r"$\mathcal{D}$")
         if plot_legend:
             ax.legend(
                 labels=labels,

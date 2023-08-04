@@ -56,6 +56,7 @@ MANIFEST
 
 # Notebooks figures and data
 notebooks/data/*
-notebooks/figs/*
+notebooks/to_archive/*
+notebooks/figures/*
 notebooks/*.pickle
 notebooks/*/*.pickle

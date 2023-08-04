@@ -167,7 +167,6 @@ class MUDProblem(DCIProblem):
         m = np.argmax(state_df["pi_up"])
         mud_point = get_df(state_df.iloc[[m]], "lam", size=self.n_params)
         return m, mud_point
-        
 
     def plot_L(
         self,
@@ -177,7 +176,6 @@ class MUDProblem(DCIProblem):
         param_col="lam",
         ratio_col="ratio",
         weight_col="weight",
-        plot_initial=True,
         plot_legend=True,
         mud_kwargs={},
         initial_kwargs={},
@@ -218,7 +216,6 @@ class MUDProblem(DCIProblem):
             param_col=param_col,
             ratio_col=ratio_col,
             weight_col=weight_col,
-            plot_initial=plot_initial,
             plot_legend=plot_legend,
             initial_kwargs=initial_kwargs,
             update_kwargs=update_kwargs,
@@ -238,7 +235,7 @@ class MUDProblem(DCIProblem):
             )
             mud_args.update(mud_kwargs)
             ax.axvline(**mud_args)
-            labels.append(mud_label)
+            labels.append(mud_args['label'])
 
         # Generate vertical lines for true values
         if lam_true is not None:
