@@ -33,14 +33,14 @@ TODO List:
     Dynamic Problem -> Finish
 
 """
+import math
+from itertools import cycle
 from typing import Callable, List, Optional, Union
 
-import math
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from itertools import cycle
 from alive_progress import alive_bar
 from numpy.linalg import LinAlgError
 from numpy.typing import ArrayLike
@@ -50,9 +50,9 @@ from scipy.stats.distributions import norm
 from sklearn.decomposition import PCA  # type: ignore
 from sklearn.preprocessing import StandardScaler  # type: ignore
 
-from pydci import OfflineSequential 
+from pydci import OfflineSequential
 from pydci.log import disable_log, enable_log, log_table, logger
-from pydci.utils import KDEError, fit_domain, get_df, put_df, set_shape, closest_factors
+from pydci.utils import KDEError, closest_factors, fit_domain, get_df, put_df, set_shape
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -104,8 +104,8 @@ class OfflineSequentialSearch:
             self.measurements = self.data.ravel()
         if self.n_meas != self.n_states:
             raise ValueError(
-                f'Number of measurements {self.n_meas} must match ' +
-                f'number of states {self.n_states}'
+                f"Number of measurements {self.n_meas} must match "
+                + f"number of states {self.n_states}"
             )
 
         self.full_search_results = None
@@ -144,8 +144,9 @@ class OfflineSequentialSearch:
             msg = f"Expected ratio thresh must be a float > 0: {exp_thresh}"
             raise ValueError(msg)
 
-        search_list = self.get_search_combinations() \
-            if search_list is None else search_list
+        search_list = (
+            self.get_search_combinations() if search_list is None else search_list
+        )
 
         pi_in = self.pi_in if pi_in is None else pi_in
         all_search_results = []
@@ -159,7 +160,6 @@ class OfflineSequentialSearch:
             length=40,
         ) as bar:
             for idx, args in enumerate(search_list):
-
                 prob = OfflineSequential(
                     self.samples,
                     self.measurements,
@@ -168,7 +168,7 @@ class OfflineSequentialSearch:
                 )
 
                 args.update(def_args if def_args is not None else {})
-                logger.debug(f'Attempting solve with args: {args}')
+                logger.debug(f"Attempting solve with args: {args}")
                 try:
                     prob.solve(**args, state_extra={"search_index": idx})
                 except ZeroDivisionError or KDEError or LinAlgError as e:
@@ -194,18 +194,24 @@ class OfflineSequentialSearch:
 
         failed = False
         if len(all_results) == 0:
-            msg = "All combinations tried failed. If store set to True, " + \
-                "check probs attribute for individual results, or turn on " + \
-                "logging using pydci.log.enable_log()"
+            msg = (
+                "All combinations tried failed. If store set to True, "
+                + "check probs attribute for individual results, or turn on "
+                + "logging using pydci.log.enable_log()"
+            )
             failed = True
         else:
             # Parse DataFrame with results of mud estimations for each ts choice
             self.full_search_results = self._process_search_results(
-                all_search_results, exp_thresh)
+                all_search_results, exp_thresh
+            )
             self.search_results = self._process_search_results(all_results, exp_thresh)
             self.result = self.search_results[self.search_results[best_method]]
-            self.best = None if len(self.result) == 0 else probs[
-                self.result['search_index'].values[0]]
+            self.best = (
+                None
+                if len(self.result) == 0
+                else probs[self.result["search_index"].values[0]]
+            )
 
             if self.best is None:
                 msg = f"No solution found within exp_thresh {exp_thresh} for any solve"
@@ -220,8 +226,7 @@ class OfflineSequentialSearch:
         dfs,
         exp_thresh,
     ):
-        """
-        """
+        """ """
         res_df = pd.concat(dfs)
         res_df["predict_delta"] = np.abs(res_df["e_r"] - 1.0)
         res_df["within_thresh"] = res_df["predict_delta"] <= exp_thresh
@@ -259,7 +264,7 @@ class OfflineSequentialSearch:
         n_data = len(self.measurements)
         if data_chunk_size is None:
             data_chunk_size = self.n_params if self.n_params <= n_data else n_data
-            if int(n_data/data_chunk_size) > 10:
+            if int(n_data / data_chunk_size) > 10:
                 data_chunk_size = int(n_data / 10)
 
         def order_of_magnitude(n):
@@ -269,30 +274,33 @@ class OfflineSequentialSearch:
         if pca_range is None:
             max_nc = min(order_of_magnitude(self.n_samples), max_nc)
             pca_range = range(min(max_nc, data_chunk_size))
-        logger.debug(f'PCA search range {pca_range}')
+        logger.debug(f"PCA search range {pca_range}")
 
         # * 2. # Data Points to Use : Increasing groups of data_chunk_size.
         if mask_range is None:
-            mask_range = [n_data] if all_data else range(
-                data_chunk_size, n_data + 1, data_chunk_size)
-        logger.debug(f'Data chunk end points: {mask_range}')
+            mask_range = (
+                [n_data]
+                if all_data
+                else range(data_chunk_size, n_data + 1, data_chunk_size)
+            )
+        logger.debug(f"Data chunk end points: {mask_range}")
 
         # * 3. # Splits : 1 -> (# data/# data_chunk_size). Splits of data_chunk_size.
         if split_range is None:
-            split_range = range(1, int(n_data/data_chunk_size) + 1)
-        logger.debug(f'# of splits: {split_range}')
+            split_range = range(1, int(n_data / data_chunk_size) + 1)
+        logger.debug(f"# of splits: {split_range}")
 
         search_list = [
             {
-                'exp_thresh': exp_thresh,
-                'pca_components': [list(range(i + 1))],
-                'pca_mask': range(j),
-                'pca_splits': k,
+                "exp_thresh": exp_thresh,
+                "pca_components": [list(range(i + 1))],
+                "pca_mask": range(j),
+                "pca_splits": k,
             }
             for i in pca_range
             for j in mask_range
             for k in split_range
-            if j/(k*data_chunk_size) >= 1.0
+            if j / (k * data_chunk_size) >= 1.0
         ]
 
         return search_list
@@ -339,13 +347,17 @@ class OfflineSequentialSearch:
 
         probs = self.probs if probs is None else probs
         if len(probs) == 0:
-            raise ValueError('No probs found. Run solve() first.')
+            raise ValueError("No probs found. Run solve() first.")
 
         # Plot initial distribution
         _, labels = probs[0].plot_L(
             param_idx=param_idx,
             iteration=0,
-            initial_kwargs={'color': 'black', 'linestyle': ':', 'label': '$\pi^\mathrm{init}$'},
+            initial_kwargs={
+                "color": "black",
+                "linestyle": ":",
+                "label": "$\pi^\mathrm{init}$",
+            },
             update_kwargs=None,
             mud_kwargs=None,
             lam_true=None,
@@ -354,7 +366,9 @@ class OfflineSequentialSearch:
 
         search_idxs = list(range(len(probs))) if search_idxs is None else search_idxs
         if len(search_idxs) > max_plot:
-            search_idxs = list(range(0, len(search_idxs), int(len(search_idxs)/max_plot)))
+            search_idxs = list(
+                range(0, len(search_idxs), int(len(search_idxs) / max_plot))
+            )
         if isinstance(color, str):
             colors = [color] * (len(search_idxs) + 1)
         else:
@@ -362,22 +376,24 @@ class OfflineSequentialSearch:
 
         # Plot iterative updates, for each iteration specified
         if len(search_idxs) > 0:
-            ls = ['-', '--', '-.']
+            ls = ["-", "--", "-."]
             ls = [linestyle] * (len(search_idxs) + 1) if linestyle is not None else ls
             linecycler = cycle(ls)
 
-            line_opts = {'fill': False}
+            line_opts = {"fill": False}
             for i, si in enumerate(search_idxs):
                 ls = next(linecycler)
-                line_opts['label'] = f"$(\pi^\mathrm{{up}}_{{\lambda_{param_idx}}})_{{s = {si}}}$"
-                line_opts['color'] = colors[i]
-                line_opts['linestyle'] = ls
+                line_opts[
+                    "label"
+                ] = f"$(\pi^\mathrm{{up}}_{{\lambda_{param_idx}}})_{{s = {si}}}$"
+                line_opts["color"] = colors[i]
+                line_opts["linestyle"] = ls
                 mud_args = {
-                    'color': colors[i],
-                    'linestyle': ls,
-                    'linewidth': 2,
-                    'label': f'$(\lambda^\mathrm{{MUD}})_{{s = {si}}} =  $' +
-                    f'{probs[si].mud_point[param_idx]:.2e}'
+                    "color": colors[i],
+                    "linestyle": ls,
+                    "linewidth": 2,
+                    "label": f"$(\lambda^\mathrm{{MUD}})_{{s = {si}}} =  $"
+                    + f"{probs[si].mud_point[param_idx]:.2e}",
                 }
                 _, l = probs[si].plot_L(
                     param_idx=param_idx,
@@ -389,7 +405,7 @@ class OfflineSequentialSearch:
                 )
                 labels += l
 
-        ax.legend(labels=labels, loc='upper right', fontsize=14)
+        ax.legend(labels=labels, loc="upper right", fontsize=14)
 
         return ax
 
@@ -407,22 +423,21 @@ class OfflineSequentialSearch:
         fig, ax = plt.subplots(
             grid_plot[0],
             grid_plot[1],
-            figsize=figure_size if figure_size is not None else
-            (grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
+            figsize=figure_size
+            if figure_size is not None
+            else (grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
         )
 
         lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
         for i, ax in enumerate(ax.flat):
             self.plot_param_updates(
-                param_idx=i,
-                search_idxs=search_idxs,
-                lam_true=lam_true,
-                ax=ax,
-                **kwargs
+                param_idx=i, search_idxs=search_idxs, lam_true=lam_true, ax=ax, **kwargs
             )
             # Double size of xaxis range by reading existing limits
             xlims = ax.get_xlim()
-            ax.set_xlim(xlims[0] - (xlims[1] - xlims[0]), xlims[1] + (xlims[1] - xlims[0]))
+            ax.set_xlim(
+                xlims[0] - (xlims[1] - xlims[0]), xlims[1] + (xlims[1] - xlims[0])
+            )
             ax.set_title(f"$\lambda_{i}$")
 
         fig.suptitle(
@@ -434,13 +449,13 @@ class OfflineSequentialSearch:
 
     def metric_plot(
         self,
-        metric='e_r',
+        metric="e_r",
         x_vals=None,
-        x_label='Iteration',
+        x_label="Iteration",
         e_r_thresh=0.2,
         kl_thresh=4.5,
         ax=None,
-        **kwargs
+        **kwargs,
     ):
         """
         Plot the expected ratio
@@ -448,48 +463,65 @@ class OfflineSequentialSearch:
         if ax is None:
             fig, ax = plt.subplots(figsize=(12, 6))
 
-        if metric not in ['e_r', 'kl']:
+        if metric not in ["e_r", "kl"]:
             raise ValueError('metric must be one of "e_r" or "kl"')
 
         # Add one row for first iteration of each option searched
         sr = self.full_search_results.copy()
-        sr[x_label] = (sr['i'] + 1)/sr['num_splits']
-        first = sr[sr['i'] == 0].copy()
+        sr[x_label] = (sr["i"] + 1) / sr["num_splits"]
+        first = sr[sr["i"] == 0].copy()
         first[x_label] = 0
-        plot_df = pd.concat([first,  sr])
+        plot_df = pd.concat([first, sr])
 
         x_vals = x_label if x_vals is None else x_vals
 
         args = dict(
             x=x_vals,
             y=metric,
-            hue='search_index',
-            marker='o',
+            hue="search_index",
+            marker="o",
             ax=ax,
         )
         args.update(kwargs)
         sns.lineplot(plot_df, **args)
 
-        if metric == 'e_r':
-            ax.hlines([1], xmin=0.0, xmax=1.0, color='black', linestyle=':', label='$\mathbb{E}(r)$ ≈ 1')
+        if metric == "e_r":
+            ax.hlines(
+                [1],
+                xmin=0.0,
+                xmax=1.0,
+                color="black",
+                linestyle=":",
+                label="$\mathbb{E}(r)$ ≈ 1",
+            )
             if e_r_thresh is not None:
                 ax.hlines(
                     [1 + e_r_thresh, 1 - e_r_thresh],
-                    xmin=0.0, xmax=1.0,
-                    color='blue', linestyle=':', label=f'$\pm \epsilon_\mathrm{{pred}} = {e_r_thresh}$'
+                    xmin=0.0,
+                    xmax=1.0,
+                    color="blue",
+                    linestyle=":",
+                    label=f"$\pm \epsilon_\mathrm{{pred}} = {e_r_thresh}$",
                 )
-        if metric == 'kl':
-            ax.hlines([kl_thresh], xmin=0.0, xmax=1.0,
-                      color='red', linestyle=':', label=f'$\epsilon_\delta = {kl_thresh}$')
+        if metric == "kl":
+            ax.hlines(
+                [kl_thresh],
+                xmin=0.0,
+                xmax=1.0,
+                color="red",
+                linestyle=":",
+                label=f"$\epsilon_\delta = {kl_thresh}$",
+            )
         ax.set_xlabel(x_label)
         labels = {
-            'kl': '$\mathrm{KL}(\pi^\mathrm{up}_i | \pi^\mathrm{up}_{i-1})$',
-            'e_r': '$\mathbb{E}(r_i)$'}
+            "kl": "$\mathrm{KL}(\pi^\mathrm{up}_i | \pi^\mathrm{up}_{i-1})$",
+            "e_r": "$\mathbb{E}(r_i)$",
+        }
         ax.set_ylabel(labels[metric])
-        ax.set_xlabel('i / # iterations')
+        ax.set_xlabel("i / # iterations")
 
         ax.set_xlim(-0.4, 1.1)
-        ax.legend(loc='upper left')
+        ax.legend(loc="upper left")
 
         return ax
 
@@ -504,9 +536,9 @@ class OfflineSequentialSearch:
         """
         fig, ax = plt.subplots(2, 1, figsize=figsize)
 
-        self.metric_plot(metric='e_r', e_r_thresh=e_r_thresh, ax=ax[0])
+        self.metric_plot(metric="e_r", e_r_thresh=e_r_thresh, ax=ax[0])
 
-        self.metric_plot(metric='kl', kl_thresh=kl_thresh, ax=ax[1])
+        self.metric_plot(metric="kl", kl_thresh=kl_thresh, ax=ax[1])
 
     def _parse_title(
         self,

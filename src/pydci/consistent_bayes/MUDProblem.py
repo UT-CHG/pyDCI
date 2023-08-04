@@ -225,7 +225,9 @@ class MUDProblem(DCIProblem):
 
         if mud_kwargs is not None:
             mud_point = self.get_mud_point(df)[1][0]
-            mud_label = f"$\lambda^{{MUD}}_{param_idx} = " + f"{mud_point[param_idx]:.4f}$"
+            mud_label = (
+                f"$\lambda^{{MUD}}_{param_idx} = " + f"{mud_point[param_idx]:.4f}$"
+            )
             mud_args = dict(
                 x=mud_point[param_idx],
                 linewidth=3,
@@ -235,7 +237,7 @@ class MUDProblem(DCIProblem):
             )
             mud_args.update(mud_kwargs)
             ax.axvline(**mud_args)
-            labels.append(mud_args['label'])
+            labels.append(mud_args["label"])
 
         # Generate vertical lines for true values
         if lam_true is not None:

@@ -88,7 +88,7 @@ class HeatModel(DynamicModel):
         self.forcing_expression = forcing_expression
 
         # Setup simulation
-        logger.debug('Setting up simulation')
+        logger.debug("Setting up simulation")
         self.setup_simulation(true_k_x=true_k_x)
 
         # Note we set a dummy lam_true for now because when we set thermal
@@ -248,13 +248,13 @@ class HeatModel(DynamicModel):
         This is called on each run of `run_model()` to reset the parameters
         of the simulation as necessary.
         """
-        logger.debug('Constructing k_x field')
+        logger.debug("Constructing k_x field")
         params = self.lam_true if params is None else params
         proj_vals = self.reconstruct(params, log=True)
         kx = fem.Function(self.V)
         kx.x.array[:] = proj_vals
 
-        logger.debug('Assembling bilinear form')
+        logger.debug("Assembling bilinear form")
         u, v = ufl.TrialFunction(self.V), ufl.TestFunction(self.V)
         a = (
             u * v * ufl.dx
@@ -264,7 +264,7 @@ class HeatModel(DynamicModel):
         A = fem.petsc.assemble_matrix(self.bilinear_form, bcs=[self.boundary_condition])
         A.assemble()
 
-        logger.debug('Assembling linear form')
+        logger.debug("Assembling linear form")
         if self.forcing_expression is None:
             self.f = fem.Constant(self.domain, 0.0)
             L = (self.u_n + self.solve_ts * self.f) * v * ufl.dx
@@ -279,13 +279,13 @@ class HeatModel(DynamicModel):
         self.b = fem.petsc.create_vector(self.linear_form)
 
         # Petsc solver
-        logger.debug('Initializing solver')
+        logger.debug("Initializing solver")
         solver = PETSc.KSP().create(self.domain.comm)
         solver.setOperators(A)
         solver.setType(PETSc.KSP.Type.PREONLY)
         solver.getPC().setType(PETSc.PC.Type.LU)
         self.solver = solver
-        
+
     def forward_model(
         self,
         x0: List[float],
@@ -367,16 +367,16 @@ class HeatModel(DynamicModel):
     def take_snaps(self, data_df, sample_ts=0.01):
         """
         Take snapshots of data at a given time interval.
-        Snapshots consist of data frame with columns t_{i} for 
+        Snapshots consist of data frame with columns t_{i} for
         each time step to be ploted, and each row being a specific
         index in the grid.
         """
-        remainder = data_df['ts'] % sample_ts
+        remainder = data_df["ts"] % sample_ts
 
         # Select rows where the remainder is close to zero (within a small tolerance)
         data = data_df[remainder < 1e-4]
-        times = [f't_{i}' for i, t in enumerate(data['ts'])]
-        true_cols = [col for col in data.columns if col.startswith('q_lam_true')]
+        times = [f"t_{i}" for i, t in enumerate(data["ts"])]
+        true_cols = [col for col in data.columns if col.startswith("q_lam_true")]
         data = data[true_cols].values.T
 
         return pd.DataFrame(data, columns=times)

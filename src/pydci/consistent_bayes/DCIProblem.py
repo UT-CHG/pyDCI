@@ -37,13 +37,20 @@ import seaborn as sns
 from numpy.typing import ArrayLike
 from scipy.stats import rv_continuous  # type: ignore
 from scipy.stats import entropy, gaussian_kde
-from scipy.stats.distributions import norm
 from sklearn.decomposition import PCA  # type: ignore
 from sklearn.preprocessing import StandardScaler  # type: ignore
 
 from pydci.log import disable_log, enable_log, log_table, logger
-from pydci.utils import KDEError, fit_domain, get_df, gkde, put_df, set_shape, closest_factors
 from pydci.plotting import DEF_RC_PARAMS
+from pydci.utils import (
+    KDEError,
+    closest_factors,
+    fit_domain,
+    get_df,
+    gkde,
+    put_df,
+    set_shape,
+)
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -495,7 +502,7 @@ class DCIProblem(object):
             )
             init_args.update(initial_kwargs)
             sns.kdeplot(**init_args)
-            labels.append(init_args['label'])
+            labels.append(init_args["label"])
 
         if update_kwargs is not None:
             pi_up_label = f"$\pi^{{up}}_{{\lambda_{param_idx}}}$"
@@ -509,10 +516,8 @@ class DCIProblem(object):
                 weights=df[weight_col] * df[ratio_col],
             )
             update_args.update(update_kwargs)
-            sns.kdeplot(
-                **update_args
-            )
-            labels.append(update_args['label'])
+            sns.kdeplot(**update_args)
+            labels.append(update_args["label"])
 
         # Set plot specifications
         ax.set_xlabel(f"$\lambda_{param_idx}$")
@@ -726,8 +731,9 @@ class DCIProblem(object):
         fig, ax = plt.subplots(
             grid_plot[0],
             grid_plot[1],
-            figsize=(grid_plot[0] * (base_size + 2),
-                     grid_plot[0] * base_size) if figsize is None else figsize,
+            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size)
+            if figsize is None
+            else figsize,
         )
 
         lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true

@@ -35,13 +35,13 @@ TODO List:
 """
 import pdb
 import random
+from itertools import cycle
 from typing import Callable, List, Optional, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from itertools import cycle
 from alive_progress import alive_bar
 from numpy.linalg import LinAlgError
 from numpy.typing import ArrayLike
@@ -53,7 +53,7 @@ from sklearn.preprocessing import StandardScaler  # type: ignore
 
 from pydci import PCAMUDProblem
 from pydci.log import disable_log, enable_log, log_table, logger
-from pydci.utils import KDEError, fit_domain, get_df, put_df, set_shape, closest_factors
+from pydci.utils import KDEError, closest_factors, fit_domain, get_df, put_df, set_shape
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -172,7 +172,6 @@ class OfflineSequential(PCAMUDProblem):
             num_splits = pca_splits if pca_splits is not None else 1
             pca_splits = [
                 range(x[0], x[-1] + 1) for x in np.array_split(pca_mask, num_splits)
-
             ]
         elif isinstance(pca_splits, list):
             num_splits = len(pca_splits)
@@ -181,9 +180,9 @@ class OfflineSequential(PCAMUDProblem):
                     "Cannot specify both pca_mask and non-integer pca_splits"
                 )
         iterations = [(i, j) for i in pca_splits for j in pca_components]
-        prev_in = self.dists['pi_in']
+        prev_in = self.dists["pi_in"]
         if len(iterations) == 0:
-            raise ValueError(f'No iterations specified: {pca_splits}, {pca_mask}')
+            raise ValueError(f"No iterations specified: {pca_splits}, {pca_mask}")
         for i, (pca_mask, pca_cs) in enumerate(iterations):
             str_val = pca_mask if pca_mask is not None else "ALL"
             logger.info(f"Iteration {i}: Solving using ({str_val}, {pca_cs})")
@@ -215,15 +214,17 @@ class OfflineSequential(PCAMUDProblem):
                     l.msg = "Unknown linalg error on first iteration."
                     raise l
                 else:
-                    logger.info(f"({i}): PDF on constructed kde failed. " +
-                                f"Highly correlated data, or curse of dim - str({l})")
+                    logger.info(
+                        f"({i}): PDF on constructed kde failed. "
+                        + f"Highly correlated data, or curse of dim - str({l})"
+                    )
                     failed = True
             else:
                 e_r = self.result["e_r"].values[0]
                 if (diff := np.abs(e_r - 1.0)) > exp_thresh or failed:
                     logger.info(f"|E(r) - 1| = {diff} > {exp_thresh} - Stopping")
                     if i == 0:
-                        raise RuntimeError('No solution found within exp_thresh')
+                        raise RuntimeError("No solution found within exp_thresh")
                     failed = True
 
             if failed:
@@ -252,11 +253,11 @@ class OfflineSequential(PCAMUDProblem):
                 if i != len(iterations) - 1:
                     logger.info("Updating weights")
                     weights.append(self.state["ratio"].values)
-                    prev_in = self.dists['pi_in']
+                    prev_in = self.dists["pi_in"]
 
         self.it_results = pd.concat(it_results)
         self.result = self.it_results.iloc[[-1]]
-        self.result = self.result.drop(columns=['i', 'pca_mask'])
+        self.result = self.result.drop(columns=["i", "pca_mask"])
 
     def get_iteration_state(self, iteration=-1):
         """
@@ -442,7 +443,11 @@ class OfflineSequential(PCAMUDProblem):
         _, labels = self.plot_L(
             param_idx=param_idx,
             iteration=0,
-            initial_kwargs={'color': 'black', 'linestyle': ':', 'label': '$\pi^\mathrm{init}$'},
+            initial_kwargs={
+                "color": "black",
+                "linestyle": ":",
+                "label": "$\pi^\mathrm{init}$",
+            },
             update_kwargs=None,
             mud_kwargs=None,
             lam_true=None,
@@ -457,17 +462,23 @@ class OfflineSequential(PCAMUDProblem):
 
         # Plot iterative updates, for each iteration specified
         if len(iterations) > 0:
-            ls = ['--', '-.']
+            ls = ["--", "-."]
             ls = [linestyle] * (len(iterations) + 1) if linestyle is not None else ls
             linecycler = cycle(ls)
 
-            alphas = np.ones(len(iterations)) if not shade else np.linspace(0.1, 0.9, len(iterations))
-            line_opts = {'fill': False}
+            alphas = (
+                np.ones(len(iterations))
+                if not shade
+                else np.linspace(0.1, 0.9, len(iterations))
+            )
+            line_opts = {"fill": False}
             for i, it in enumerate(iterations):
-                line_opts['alpha'] = alphas[i]
-                line_opts['label'] = f"$(\pi^\mathrm{{up}}_{{\lambda_{param_idx}}})_{{{i}}}$"
-                line_opts['color'] = colors[i]
-                line_opts['linestyle'] = next(linecycler)
+                line_opts["alpha"] = alphas[i]
+                line_opts[
+                    "label"
+                ] = f"$(\pi^\mathrm{{up}}_{{\lambda_{param_idx}}})_{{{i}}}$"
+                line_opts["color"] = colors[i]
+                line_opts["linestyle"] = next(linecycler)
                 _, l = self.plot_L(
                     param_idx=param_idx,
                     iteration=it,
@@ -480,11 +491,11 @@ class OfflineSequential(PCAMUDProblem):
                 labels += l
 
         # Plot final solution, with mud argument and true lambda
-        line_opts = {'fill': True}
-        line_opts['label'] = f"$\pi^\mathrm{{up}}_{{\lambda_{param_idx}}}$"
-        line_opts['linestyle'] = '-'
-        line_opts['color'] = colors[-1]
-        mud_args = {'alpha': 1.0, 'linestyle': '--', 'label': '$\lambda^\mathrm{MUD}$'}
+        line_opts = {"fill": True}
+        line_opts["label"] = f"$\pi^\mathrm{{up}}_{{\lambda_{param_idx}}}$"
+        line_opts["linestyle"] = "-"
+        line_opts["color"] = colors[-1]
+        mud_args = {"alpha": 1.0, "linestyle": "--", "label": "$\lambda^\mathrm{MUD}$"}
         # if 'color' in kwargs.keys():
         #     mud_args['color'] = kwargs['color']
         _, l = self.plot_L(
@@ -497,46 +508,46 @@ class OfflineSequential(PCAMUDProblem):
             ax=ax,
         )
         labels += l
-        ax.legend(labels=labels, loc='upper right', fontsize=14)
+        ax.legend(labels=labels, loc="upper right", fontsize=14)
 
-#     def density_plots(
-#         self,
-#         lam_true=None,
-#         lam_kwargs=None,
-#         q_lam_kwargs=None,
-#         axs=None,
-#         figsize=(14, 6),
-#     ):
-#         """
-#         Plot param and observable space onto sampe plot
-# 
-#         TODO:
-#             - Update this method 
-#         """
-#         rasie NotImplementedError("This method is not implemented yet")
-#         # if axs is None:
-        #     fig, axs = plt.subplots(1, 2, figsize=(14, 6))
-        # elif len(axs) != 2:
-        #     len(axs) != self.n_params
-        # lam_kwargs = {} if lam_kwargs is None else lam_kwargs
-        # q_lam_kwargs = {} if q_lam_kwargs is None else q_lam_kwargs
-        # lam_kwargs["ax"] = axs[0]
-        # lam_kwargs["nc"] = nc
-        # q_lam_kwargs["ax"] = axs[1]
-        # q_lam_kwargs["nc"] = nc
-        # self.plot_L(**lam_kwargs)
-        # self.plot_D(**q_lam_kwargs)
-        # lam_true = lam_kwargs.get("lam_true", None)
-        # fig = axs[0].get_figure()
-        # fig.suptitle(
-        #     self._parse_title(
-        #         result=self.result if nc is None else self.pca_results.loc[[nc]],
-        #         lam_true=lam_true,
-        #     )
-        # )
-        # fig.tight_layout()
+    #     def density_plots(
+    #         self,
+    #         lam_true=None,
+    #         lam_kwargs=None,
+    #         q_lam_kwargs=None,
+    #         axs=None,
+    #         figsize=(14, 6),
+    #     ):
+    #         """
+    #         Plot param and observable space onto sampe plot
+    #
+    #         TODO:
+    #             - Update this method
+    #         """
+    #         rasie NotImplementedError("This method is not implemented yet")
+    #         # if axs is None:
+    #     fig, axs = plt.subplots(1, 2, figsize=(14, 6))
+    # elif len(axs) != 2:
+    #     len(axs) != self.n_params
+    # lam_kwargs = {} if lam_kwargs is None else lam_kwargs
+    # q_lam_kwargs = {} if q_lam_kwargs is None else q_lam_kwargs
+    # lam_kwargs["ax"] = axs[0]
+    # lam_kwargs["nc"] = nc
+    # q_lam_kwargs["ax"] = axs[1]
+    # q_lam_kwargs["nc"] = nc
+    # self.plot_L(**lam_kwargs)
+    # self.plot_D(**q_lam_kwargs)
+    # lam_true = lam_kwargs.get("lam_true", None)
+    # fig = axs[0].get_figure()
+    # fig.suptitle(
+    #     self._parse_title(
+    #         result=self.result if nc is None else self.pca_results.loc[[nc]],
+    #         lam_true=lam_true,
+    #     )
+    # )
+    # fig.tight_layout()
 
-        # return axs
+    # return axs
 
     def param_density_plots(
         self,

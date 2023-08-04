@@ -1,6 +1,6 @@
 from pydci.consistent_bayes.DCIProblem import DCIProblem
 from pydci.consistent_bayes.MUDProblem import MUDProblem
-from pydci.consistent_bayes.PCAMUDProblem import PCAMUDProblem
 from pydci.consistent_bayes.OfflineSequential import OfflineSequential
 from pydci.consistent_bayes.OfflineSequentialSearch import OfflineSequentialSearch
 from pydci.consistent_bayes.OnlineSequential import OnlineSequential
+from pydci.consistent_bayes.PCAMUDProblem import PCAMUDProblem

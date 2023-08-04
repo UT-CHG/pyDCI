@@ -38,9 +38,7 @@ class Monomial1D(Model.DynamicModel):
         Monomial Forward Model
         """
         # return np.array([[lam[0] ** self.p]])
-        res = np.repeat(
-            np.array([[lam[0] ** self.p]]), len(times), axis=0
-        )
+        res = np.repeat(np.array([[lam[0] ** self.p]]), len(times), axis=0)
         return res
 
 

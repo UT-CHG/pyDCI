@@ -6,23 +6,31 @@ TODO:
 
 """
 import random
+from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Union
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import matplotlib.pyplot as plt
 from alive_progress import alive_bar
 from matplotlib.patches import Rectangle
-from rich.table import Table
-from scipy.stats.distributions import uniform
-from scipy.stats import multivariate_normal
-from pathlib import Path
 from numpy.linalg import LinAlgError
+from rich.table import Table
+from scipy.stats import multivariate_normal
+from scipy.stats.distributions import uniform
 
-from pydci.log import log_table, logger, enable_log, disable_log
-from pydci.utils import add_noise, get_df, get_uniform_box, \
-    put_df, set_shape, KDEError, set_seed, closest_factors
+from pydci.log import disable_log, enable_log, log_table, logger
+from pydci.utils import (
+    KDEError,
+    add_noise,
+    closest_factors,
+    get_df,
+    get_uniform_box,
+    put_df,
+    set_seed,
+    set_shape,
+)
 
 
 class DynamicModel:
@@ -55,7 +63,7 @@ class DynamicModel:
         state_maxs=None,
         param_shifts=None,
         state_idxs=None,
-        def_init=['uniform', {'scale': 1.0}],
+        def_init=["uniform", {"scale": 1.0}],
         file=None,
     ):
         if file is not None:
@@ -80,13 +88,15 @@ class DynamicModel:
         if state_idxs is not None:
             self.state_idxs = state_idxs
         else:
-            num_states = self.n_states if self.n_states < self.MAX_STATES else self.MAX_STATES
+            num_states = (
+                self.n_states if self.n_states < self.MAX_STATES else self.MAX_STATES
+            )
             self.state_idxs = np.random.choice(
                 self.n_states, size=num_states, replace=False
             )
         self.state_idxs.sort()
         self.state_idxs = np.array(self.state_idxs)
-        logger.debug(f'State idxs set at: {state_idxs}')
+        logger.debug(f"State idxs set at: {state_idxs}")
 
         # * Measruements for each data window (i.e. iteration)
         self.data = []
@@ -108,7 +118,7 @@ class DynamicModel:
     @property
     def n_sensors(self) -> int:
         return len(self.state_idxs)
-    
+
     @property
     def n_intervals(self) -> int:
         return len(self.data)
@@ -118,78 +128,90 @@ class DynamicModel:
         Load model state from file
 
         """
-        path = f'{self.__class__}.h5' if path is None else path
+        path = f"{self.__class__}.h5" if path is None else path
 
         # Resolve to absolute path
         path = Path(path).absolute()
 
         if not path.exists():
-            raise ValueError(f'Model file at {path} does not exist.')
+            raise ValueError(f"Model file at {path} does not exist.")
 
         req_attrs = [
-            'x0', 'lam_true', 'measurement_noise', 'solve_ts', 'sample_ts',
-            'param_mins', 'param_maxs', 'state_mins', 'state_maxs', 'param_shifts'
+            "x0",
+            "lam_true",
+            "measurement_noise",
+            "solve_ts",
+            "sample_ts",
+            "param_mins",
+            "param_maxs",
+            "state_mins",
+            "state_maxs",
+            "param_shifts",
         ]
         attrs = dir(self)
         if any([attr in attrs for attr in req_attrs]):
             msg = "Loading an already initialized model. This will clear all data."
             logger.warning(msg)
-            res = input(f'{msg} Continue? (y/N): ')
-            if res.lower() != 'y':
-                logger.info('Load aborted.')
+            res = input(f"{msg} Continue? (y/N): ")
+            if res.lower() != "y":
+                logger.info("Load aborted.")
                 return
-        _ = [setattr(self, attr, None) for attr in req_attrs]  
+        _ = [setattr(self, attr, None) for attr in req_attrs]
 
-        logger.info(f'Saving model state to file at {str(path)}')
+        logger.info(f"Saving model state to file at {str(path)}")
         with pd.HDFStore(str(path), mode="r") as store:
-
             for key, val in store.items():
                 v_type = type(val)
                 logger.debug(
-                    f'type({key}) = {v_type} ' +
-                    f'\n ?= DataframeDF -> {isinstance(store[key], pd.DataFrame)}' +
-                    f'\n ? = Series -> {isinstance(store[key], pd.Series)}' +
-                    f'\n ? = dict -> {isinstance(store[key], dict)}'
+                    f"type({key}) = {v_type} "
+                    + f"\n ?= DataframeDF -> {isinstance(store[key], pd.DataFrame)}"
+                    + f"\n ? = Series -> {isinstance(store[key], pd.Series)}"
+                    + f"\n ? = dict -> {isinstance(store[key], dict)}"
                 )
                 if isinstance(store[key], pd.DataFrame):
-                    val = [d[1].reset_index(
-                        level=0, drop=True).dropna(axis=1)
-                        for d in store[key].groupby(level=0)]
-                    logger.debug(f'DF: {key}:{[v.head(n=1) for v in val[0:2]]}')
+                    val = [
+                        d[1].reset_index(level=0, drop=True).dropna(axis=1)
+                        for d in store[key].groupby(level=0)
+                    ]
+                    logger.debug(f"DF: {key}:{[v.head(n=1) for v in val[0:2]]}")
                     setattr(self, key[1:], val)
-                if isinstance(store[key], pd.Series) and key.startswith('__dict__'):
-                    name = key[len('/__dict__'):]
+                if isinstance(store[key], pd.Series) and key.startswith("__dict__"):
+                    name = key[len("/__dict__") :]
                     val = store[key].to_dict()
-                    logger.debug(f'Dictioanry: {name}:{val}')
+                    logger.debug(f"Dictioanry: {name}:{val}")
                     setattr(self, name, val)
 
             info_d = store["__attrs__"].to_dict()
-            logger.debug(f'Setting info attributes of {len(info_d.keys())}')
+            logger.debug(f"Setting info attributes of {len(info_d.keys())}")
             for k, v in info_d.items():
-                logger.debug(f'Setting attr {k} to {v}')
+                logger.debug(f"Setting attr {k} to {v}")
                 setattr(self, k, v)
 
     def save(self, path=None, overwrite=False):
         """
         Save model state to file
         """
-        path = f'{self.__class__}.h5' if path is None else path
+        path = f"{self.__class__}.h5" if path is None else path
 
         allowable_types = [int, float, str, bool, list, pd.DataFrame, np.ndarray]
-        info_dict = dict([(x, getattr(self, x)) for x in dir(self)
-                          if type(getattr(self, x)) in allowable_types
-                          and not x.startswith('_')
-                          and not x.startswith('n_')
-                          and not x.isupper()])
+        info_dict = dict(
+            [
+                (x, getattr(self, x))
+                for x in dir(self)
+                if type(getattr(self, x)) in allowable_types
+                and not x.startswith("_")
+                and not x.startswith("n_")
+                and not x.isupper()
+            ]
+        )
 
         if Path(path).exists() and not overwrite:
-            res = input('File exists. Overwrite? (y/N): ')
-            if res.lower() != 'y':
-                logger.info('Save aborted {path} exists. Choose different path name')
+            res = input("File exists. Overwrite? (y/N): ")
+            if res.lower() != "y":
+                logger.info("Save aborted {path} exists. Choose different path name")
                 return
 
         with pd.HDFStore(path, mode="w") as store:
-
             to_rem = []
             for key, val in info_dict.items():
                 if v_type := type(val) == list and len(val) > 0:
@@ -199,12 +221,12 @@ class DynamicModel:
                         val = pd.concat(val, keys=[f"{i}" for i in range(len(val))])
                         v_type = pd.DataFrame
                 if v_type == pd.DataFrame:
-                    logger.debug(f'Saving {key} as DataFrame')
+                    logger.debug(f"Saving {key} as DataFrame")
                     store.put(key, val)
                     to_rem.append(key)
                 if v_type == dict:
-                    logger.debug(f'Saving {key} as Dictionary')
-                    store.put('__dict__{key}', pd.Series(val))
+                    logger.debug(f"Saving {key} as Dictionary")
+                    store.put("__dict__{key}", pd.Series(val))
 
             for key in to_rem:
                 _ = info_dict.pop(key)
@@ -215,8 +237,8 @@ class DynamicModel:
         """
         Get array of lambda samples for a given data index
         """
-        try: 
-            lam = get_df(self.samples[data_idx], 'lam', size=self.n_params)
+        try:
+            lam = get_df(self.samples[data_idx], "lam", size=self.n_params)
         except IndexError:
             msg = f"Data index {data_idx} is out of range (< {len(self.samples)})"
             logger.error(msg)
@@ -242,14 +264,14 @@ class DynamicModel:
 
         if min_time := min(list(self.param_shifts.keys())) > t0:
             logger.warning(
-                f'Shift intervals {self.param_shifts} start after t0' +
-                f'\nExtending param value at {min_time} to {t0}'
+                f"Shift intervals {self.param_shifts} start after t0"
+                + f"\nExtending param value at {min_time} to {t0}"
             )
             self.param_shifts[t0] = self.param_shifts[min_time]
             shift_times = max(list(self.param_shifts.keys()))
             shift_times.sort()
 
-        # Determine length of time window 
+        # Determine length of time window
         time_window = t1 - t0
         solve_step = int(time_window / self.solve_ts)
         ts = np.linspace(t0, t1, solve_step)
@@ -278,10 +300,15 @@ class DynamicModel:
             return None
 
         # See if we've solved previous step and data is stored:
-        tol = max(self.solve_ts/100, 1e-6)
-        prev_solve = np.where([
-            all([np.abs(tf - x['ts'].max()) < tol,
-                 np.abs(t0 - x['ts'].min()) < tol]) for x in self.data])
+        tol = max(self.solve_ts / 100, 1e-6)
+        prev_solve = np.where(
+            [
+                all(
+                    [np.abs(tf - x["ts"].max()) < tol, np.abs(t0 - x["ts"].min()) < tol]
+                )
+                for x in self.data
+            ]
+        )
         if len(prev_solve[0]) > 0:
             logger.info(f"Found previous solve from {t0} to {tf} at {prev_solve[0][0]}")
             return prev_solve[0][0]
@@ -303,19 +330,16 @@ class DynamicModel:
         # * tf = previous time step or # of timesteps to get # data = # params
         if last_df is not None:
             if t0 is not None:
-                raise ValueError('Cannot specify t0 with existing data.')
+                raise ValueError("Cannot specify t0 with existing data.")
 
-            t0 = last_df['ts'].max()
-            tf = tf if tf is not None else \
-                t0 + (last_df["ts"].max() - t0)
+            t0 = last_df["ts"].max()
+            tf = tf if tf is not None else t0 + (last_df["ts"].max() - t0)
 
             if tf <= last_df["ts"].max():
-                raise ValueError(
-                    f"tf={tf} must be greater than last time-step {t0}.")
+                raise ValueError(f"tf={tf} must be greater than last time-step {t0}.")
         else:
             t0 = 0.0 if t0 is None else t0
-            tf = tf if tf is not None else \
-                t0 + (self.n_params) * self.sample_ts
+            tf = tf if tf is not None else t0 + (self.n_params) * self.sample_ts
 
         # * x0 = initial condition from last data, or initial for model
         if x0 is None:
@@ -340,11 +364,16 @@ class DynamicModel:
         sample_ts_flag[-1] = True
         # sample_ts_flag[0] = True if len(self.data) == 0 else False
         measurements = np.empty((len(ts), self.n_sensors))
-        logger.debug(f'Shapes: {measurements.shape}, {true_vals.shape}, {sample_ts_flag.shape}')
+        logger.debug(
+            f"Shapes: {measurements.shape}, {true_vals.shape}, {sample_ts_flag.shape}"
+        )
         measurements[:] = np.nan
         measurements[sample_ts_flag] = np.reshape(
-            add_noise(true_vals[sample_ts_flag][:, self.state_idxs].ravel(), self.measurement_noise),
-            (sum(sample_ts_flag), self.n_sensors)
+            add_noise(
+                true_vals[sample_ts_flag][:, self.state_idxs].ravel(),
+                self.measurement_noise,
+            ),
+            (sum(sample_ts_flag), self.n_sensors),
         )
         # Worked with others but not heat model. Check above works with others
         # measurements[sample_ts_flag] = np.reshape(
@@ -381,23 +410,22 @@ class DynamicModel:
           - sample_ts
           - solve_ts
         """
-        data_df = self.data[data_idx := data_idx
-                            if data_idx != -1 else len(self.data) - 1] 
+        data_df = self.data[
+            data_idx := data_idx if data_idx != -1 else len(self.data) - 1
+        ]
         x0 = get_df(data_df, "q_lam_true", self.n_states)[0]
 
-        t0 = data_df['ts'].min()
-        tf = data_df['ts'].max()
+        t0 = data_df["ts"].min()
+        tf = data_df["ts"].max()
         logger.info(
-            f'Beginning forward solve from {t0} to {tf}',
+            f"Beginning forward solve from {t0} to {tf}",
         )
 
         if samples is None:
             samples = self.get_samples(data_idx=data_idx - 1)
-            logger.info(
-                f"No samples passed. Resuming previous {len(samples)} samples"
-            )
+            logger.info(f"No samples passed. Resuming previous {len(samples)} samples")
             if isinstance(self.samples_xf[data_idx - 1], pd.DataFrame):
-                self.samples_xf[data_idx - 1] = self.samples_xf[data_idx - 1].to_numpy() 
+                self.samples_xf[data_idx - 1] = self.samples_xf[data_idx - 1].to_numpy()
             samples_x0 = self.samples_xf[data_idx - 1]
         else:
             logger.debug(f"Starting fresh simulation for {len(samples)}")
@@ -405,11 +433,9 @@ class DynamicModel:
             samples_x0 = self.get_initial_condition(x0, len(samples))
 
         push_forwards = np.zeros(
-            (len(samples), np.sum(data_df['sample_flag']), self.n_sensors)
+            (len(samples), np.sum(data_df["sample_flag"]), self.n_sensors)
         )
-        sample_full_state = np.zeros(
-            (np.sum(data_df['sample_flag']), self.n_states)
-        )
+        sample_full_state = np.zeros((np.sum(data_df["sample_flag"]), self.n_states))
         samples_xf = np.zeros((len(samples), self.n_states))
 
         with alive_bar(
@@ -421,14 +447,14 @@ class DynamicModel:
         ) as bar:
             for j, s in enumerate(samples):
                 sample_full_state = self.forward_model(
-                    samples_x0[j], data_df['ts'].to_numpy(), tuple(s)
-                )[data_df['sample_flag']]
+                    samples_x0[j], data_df["ts"].to_numpy(), tuple(s)
+                )[data_df["sample_flag"]]
                 push_forwards[j, :, :] = sample_full_state[:, self.state_idxs]
                 samples_xf[j, :] = sample_full_state[-1, :]
                 bar()
 
         q_lam_cols = [
-            f"q_lam_{x}" for x in range(np.sum(data_df['sample_flag']) * self.n_sensors)
+            f"q_lam_{x}" for x in range(np.sum(data_df["sample_flag"]) * self.n_sensors)
         ]
         full_samples_df = pd.DataFrame(
             np.hstack([samples, push_forwards.reshape(len(samples), -1)]),
@@ -440,9 +466,10 @@ class DynamicModel:
         else:
             if append:
                 self.samples[data_idx] = pd.concat(
-                    [self.samples[data_idx], full_samples_df]).reset_index(drop=True)
-                logger.info(f'samples_xf: {samples_xf}')
-                logger.info(f'previous: {self.samples_xf[data_idx]}')
+                    [self.samples[data_idx], full_samples_df]
+                ).reset_index(drop=True)
+                logger.info(f"samples_xf: {samples_xf}")
+                logger.info(f"previous: {self.samples_xf[data_idx]}")
                 self.samples_xf[data_idx] = np.vstack(
                     [self.samples_xf[data_idx], samples_xf]
                 )
@@ -467,11 +494,7 @@ class DynamicModel:
 
         return init_conds
 
-    def get_initial_samples(
-        self,
-        num_samples=100,
-        **kwargs
-    ):
+    def get_initial_samples(self, num_samples=100, **kwargs):
         """
         Wrapper method around different methods for generating initial samples.
         Model class by default has a uniform distribution over the parameter
@@ -492,19 +515,19 @@ class DynamicModel:
         dist, samples: tuple
             Tuple of the distribution object and the samples generated from it.
         """
-        if self.def_init[0] == 'uniform':
-            return self.get_uniform_initial_samples(num_samples=num_samples, **self.def_init[1])
-        elif self.def_init[0] == 'normal':
-            return self.get_normal_initial_samples(num_samples=num_samples, **self.def_init[1])
+        if self.def_init[0] == "uniform":
+            return self.get_uniform_initial_samples(
+                num_samples=num_samples, **self.def_init[1]
+            )
+        elif self.def_init[0] == "normal":
+            return self.get_normal_initial_samples(
+                num_samples=num_samples, **self.def_init[1]
+            )
         else:
             raise ValueError(f"Unrecognized distribution: {dist}")
 
     def get_uniform_initial_samples(
-        self,
-        domain=None,
-        center=None,
-        scale=0.5,
-        num_samples=1000
+        self, domain=None, center=None, scale=0.5, num_samples=1000
     ):
         """
         Generate initial samples from uniform distribution over domain set by
@@ -525,12 +548,7 @@ class DynamicModel:
         samples = dist.rvs(size=(num_samples, self.n_params))
         return dist, samples
 
-    def get_normal_initial_samples(
-        self,
-        num_samples=100,
-        mean=1.0,
-        std_dev=1.0
-    ):
+    def get_normal_initial_samples(self, num_samples=100, mean=1.0, std_dev=1.0):
         """
         Generate initial samples from uniform distribution over domain set by
         `self.set_domain`.
@@ -542,7 +560,11 @@ class DynamicModel:
             + f"\tmean: {mean}\n\tstd_dev: {std_dev}"
         )
         mean = np.ones(self.n_params) * mean if isinstance(mean, (int, float)) else mean
-        std_dev = np.ones(self.n_params) * std_dev if isinstance(std_dev, (int, float)) else std_dev
+        std_dev = (
+            np.ones(self.n_params) * std_dev
+            if isinstance(std_dev, (int, float))
+            else std_dev
+        )
         dist = multivariate_normal(mean=mean, cov=std_dev)
         samples = dist.rvs(size=num_samples)
         return dist, samples
@@ -596,7 +618,7 @@ class DynamicModel:
 
         # Plot each column (state) of data on a separate subplot
         max_it = len(self.data) - 1
-        iterations = np.arange(max_it + 1)  if iterations is None else iterations
+        iterations = np.arange(max_it + 1) if iterations is None else iterations
         for iteration in iterations:
             df = self.data[iteration]
             n_ts = len(df)
@@ -635,9 +657,12 @@ class DynamicModel:
             # Add Push Forward Data to the plot
             if plot_samples and state_idx in self.state_idxs:
                 self.plot_sample_states(
-                    iteration=iteration, state_idx=state_idx,
-                    n_samples=n_samples, ax=ax,
-                    label=False if iteration != max_it else True)
+                    iteration=iteration,
+                    state_idx=state_idx,
+                    n_samples=n_samples,
+                    ax=ax,
+                    label=False if iteration != max_it else True,
+                )
 
             if window_type == "line":
                 ax.axvline(
@@ -660,14 +685,18 @@ class DynamicModel:
             # Add Shifts as vertical lines to the plot
             if plot_shifts:
                 # Determine shift indices to plot by where df['shift_idx'] increases values, and mark indices where this happens with a flag column
-                shift_times = df['ts'][(df["shift_idx"] - df['shift_idx'].shift(1)) == 1]
+                shift_times = df["ts"][
+                    (df["shift_idx"] - df["shift_idx"].shift(1)) == 1
+                ]
                 if len(shift_times) > 0:
                     for t in shift_times:
                         ax.axvline(
                             x=t,
                             linewidth=3,
                             color="orange",
-                            label="Shift" if t >= max(self.param_shifts.keys()) else None,
+                            label="Shift"
+                            if t >= max(self.param_shifts.keys())
+                            else None,
                         )
         if window_type == "line":
             ax.axvline(
@@ -693,10 +722,9 @@ class DynamicModel:
         n_samples=10,
         ax=None,
         label=False,
-        figsize=(9, 8)
+        figsize=(9, 8),
     ):
-        """
-        """
+        """ """
         if ax is None:
             fig, ax = plt.subplots(1, 1, figsize=figsize)
 
@@ -712,8 +740,12 @@ class DynamicModel:
         max_samples = len(sample_df)
         n_samples = n_samples if n_samples < max_samples else max_samples
         rand_idxs = random.sample(range(max_samples), n_samples)
-        plot_data = sample_df[cols].to_numpy().reshape(
-            max_samples, len(times), -1)[rand_idxs, :, obs_idx].reshape(-1, len(times))
+        plot_data = (
+            sample_df[cols]
+            .to_numpy()
+            .reshape(max_samples, len(times), -1)[rand_idxs, :, obs_idx]
+            .reshape(-1, len(times))
+        )
 
         label = None if not label else f"Samples ({n_samples} random)"
         for i, d in enumerate(plot_data):
@@ -730,8 +762,15 @@ class DynamicModel:
 
         if "best_flag" in sample_df.columns is not None:
             best_sample = np.where(sample_df["best_flag"] == True)[0]
-            plot_data = sample_df[cols].to_numpy().reshape(
-                max_samples, len(times), -1)[best_sample, :, ].reshape(-1, len(times))
+            plot_data = (
+                sample_df[cols]
+                .to_numpy()
+                .reshape(max_samples, len(times), -1)[
+                    best_sample,
+                    :,
+                ]
+                .reshape(-1, len(times))
+            )
 
             sns.lineplot(
                 x=times,
@@ -746,7 +785,6 @@ class DynamicModel:
             )
 
     def plot_states(self, base_size=5, **kwargs):
-
         """
         Plot states over time
         """
@@ -760,8 +798,9 @@ class DynamicModel:
             self.plot_state(state_idx=i, ax=ax, **kwargs)
             ax.set_title(f"State {i}: Temporal Evolution")
 
+
 # TODO: Below should be moved to appropriate solver problem
-# 
+#
 #     def solve_search(
 #         self,
 #         search_list,
@@ -772,11 +811,11 @@ class DynamicModel:
 #     ):
 #         """
 #         Search through different iterations of solvign the PCA problem
-# 
+#
 #         Thea idea of this method is, given a chunk of data, and a list of
 #         different iterative solve arguments, solve them and determine
 #         the "best" solution
-# 
+#
 #         Parameters
 #         ----------
 #         """
@@ -787,7 +826,7 @@ class DynamicModel:
 #         if exp_thresh <= 0:
 #             msg = f"Expected ratio thresh must be a float > 0: {exp_thresh}"
 #             raise ValueError(msg)
-# 
+#
 #         all_search_results = []
 #         all_results = []
 #         probs = []
@@ -800,10 +839,10 @@ class DynamicModel:
 #         ) as bar:
 #             for idx, args in enumerate(search_list):
 #                 args.update(def_args if def_args is not None else {})
-# 
+#
 #                 # Get measurements from last data chunk
 #                 measurements = get_df(self.data[-1].dropna(), 'q_lam_obs', self.n_sensors)
-# 
+#
 #                 # Solve -> Saves states in state dictionary
 #                 prob = PCAMUDProblem(
 #                     self.samples[-1],
@@ -811,12 +850,12 @@ class DynamicModel:
 #                     self.measurement_noise,
 #                     pi_in=pi_in,
 #                 )
-# 
+#
 #                 try:
 #                     prob.solve_it(**args, state_extra={"search_index": idx})
 #                 except ZeroDivisionError or KDEError  or LinAlgError as e:
 #                     logger.error(f"Failed: Ill-posed problem: {e}")
-#                     continue 
+#                     continue
 #                 except RuntimeError as r:
 #                     if "No solution found within exp_thresh" in str(r):
 #                         logger.error(f"Failed: No solution in exp_thresh: {r}")
@@ -828,16 +867,16 @@ class DynamicModel:
 #                     all_search_results[-1]["index"] = idx
 #                     all_results.append(prob.result.copy())
 #                     all_results[-1]["index"] = idx
-# 
+#
 #                 probs.append(prob)
 #                 bar()
-# 
+#
 #         if len(all_results) == 0:
 #             return {'best': None,
 #                     'probs': probs,
 #                     'search_results': None,
 #                     'all_search_results': None}
-# 
+#
 #         # Parse DataFrame with results of mud estimations for each ts choice
 #         res_df = pd.concat(all_results)
 #         res_df["predict_delta"] = np.abs(res_df["e_r"] - 1.0)
@@ -855,19 +894,19 @@ class DynamicModel:
 #             res_df["kl"] <= res_df[res_df["within_thresh"]]["kl"].min(),
 #             res_df["within_thresh"],
 #         )
-# 
+#
 #         # Set to best
 #         search_results = res_df
 #         all_search_results = pd.concat(all_search_results) # Has internal iterations for each try
 #         result = res_df[res_df[best_method]]
 #         best = None if len(result) == 0 else probs[result['index'].values[0]]
-# 
+#
 #         # Return best found, results for each tried, and iterative breakdown of each try
 #         return {'best': best,
 #                 'probs': probs,
 #                 'search_results': search_results,
 #                 'all_search_results': all_search_results}
-# 
+#
 #     def get_search_combinations(self,
 #                                 data_idx=-1,
 #                                 exp_thresh=1e10,
@@ -878,7 +917,7 @@ class DynamicModel:
 #         """
 #         Determine search combinations for a given data chunk.
 #         By default uses the last data chunk in the data list.
-# 
+#
 #         TODO: Fix and check
 #         """
 #         if len(self.data) == 0 or data_idx > len(self.data):
@@ -886,23 +925,23 @@ class DynamicModel:
 #         n_data = sum(self.data[data_idx]['sample_flag']) *  self.n_sensors
 #         if data_chunk_size is None:
 #             data_chunk_size = self.n_params if self.n_params <= n_data else n_data
-# 
+#
 #         def order_of_magnitude(n):
 #             return int(math.log10(n)) + 1
-# 
+#
 #         # * 1. # PCA component : Restrict by n_sensors available
 #         max_nc = min(order_of_magnitude(len(self.samples[data_idx])), max_nc)
 #         pca_range = range(min(max_nc, data_chunk_size))
 #         logger.debug(f'PCA search range {pca_range}')
-# 
+#
 #         # * 2. # Data Points to Use : Increasing groups of data_chunk_size.
 #         mask_range = [n_data] if all_data else range(data_chunk_size, n_data + 1, data_chunk_size)
 #         logger.debug(f'Data chunk end points: {mask_range}')
-# 
+#
 #         # * 3. # Splits : 1 -> (# data/# data_chunk_size). Splits of data_chunk_size.
 #         split_range = range(1, int(n_data/data_chunk_size) + 1)
 #         logger.debug(f'# of splits: {split_range}')
-# 
+#
 #         search_list = [
 #             {
 #                 'exp_thresh': exp_thresh,
@@ -910,14 +949,14 @@ class DynamicModel:
 #                 'pca_mask': range(j),
 #                 'pca_splits': k,
 #             }
-#             for i in pca_range 
+#             for i in pca_range
 #             for j in mask_range
 #             for k in split_range
-#             if j/(k*data_chunk_size) >= 1.0 
+#             if j/(k*data_chunk_size) >= 1.0
 #         ]
-# 
+#
 #         return search_list
-# 
+#
 #     def check_overwrite(self, attr='probs', overwrite=False):
 #         """
 #         """
@@ -933,7 +972,7 @@ class DynamicModel:
 #                     if input("Continue? (y/n): ") != "y":
 #                         return
 #             setattr(self, attr, [])
-# 
+#
 #     def online_iterative(
 #         self,
 #         num_its=1,
@@ -953,7 +992,7 @@ class DynamicModel:
 #     ):
 #         """
 #         Online solve
-# 
+#
 #         If problem has not been initialized (no self.probs[] array), then the problem
 #         is initialized with a uniform distribution over the parameter space around the
 #         true value, with a scale of `diff` controlling the size of the uniform distribution
@@ -962,7 +1001,7 @@ class DynamicModel:
 #         At each iteration, a set of possible sovle parameters will be searched for, using
 #         varying number of PCA components, data points, and splits. The best solution will
 #         be determined by the `best_method` argument.
-# 
+#
 #         """
 #         if len(self.probs) == 0:
 #             logger.info(f'Initializing problem with difficulty {diff} and {num_samples}')
@@ -975,7 +1014,7 @@ class DynamicModel:
 #             samples = self.probs[-1].sample_dist(num_samples=num_samples)
 #             it = len(self.probs)
 #             logger.info(f'Continuing at iteration {it} and timestep {self.t0}')
-# 
+#
 #         max_its = it + num_its
 #         best_flag = np.empty((num_samples, 1), dtype=bool)
 #         while it < max_its:
@@ -983,7 +1022,7 @@ class DynamicModel:
 #             if it > len(self.data):
 #                 logger.debug(f"Getting {int(time_step/self.sample_ts)}. data for iteration {it}")
 #                 self.get_data(time_step)
-# 
+#
 #             self.forward_solve(samples, restart=True)
 #             search_combs = self.get_search_combinations(
 #                 **comb_args,
@@ -1006,7 +1045,7 @@ class DynamicModel:
 #                 else:
 #                     shift = True
 #                     reason = 'No solution found amongst search options:\n{search_combs}'
-# 
+#
 #                 if shift:
 #                     logger.info(f'Suspected shift in params at {it}.\n{reason}')
 #                     pi_in, samples = self.get_uniform_initial_samples(
@@ -1025,7 +1064,7 @@ class DynamicModel:
 #                 samples = self.probs[-1].sample_dist(num_samples=num_samples)
 #                 pi_in = self.probs[-1].dists['pi_up']
 #                 it += 1
-# 
+#
 #     def adaptive_online_iterative(
 #         self,
 #         time_windows,
@@ -1040,7 +1079,7 @@ class DynamicModel:
 #     ):
 #         """
 #         Online solve
-# 
+#
 #         If problem has not been initialized (no self.probs[] array), then the problem
 #         is initialized with a uniform distribution over the parameter space around the
 #         true value, with a scale of `diff` controlling the size of the uniform distribution
@@ -1049,39 +1088,39 @@ class DynamicModel:
 #         At each iteration, a set of possible sovle parameters will be searched for, using
 #         varying number of PCA components, data points, and splits. The best solution will
 #         be determined by the `best_method` argument.
-# 
+#
 #         """
 #         logger.debug(f'Running online iterative solve over time window {time_windows}')
-# 
+#
 #         if seed is not None:
 #             logger.info(f'Setting seed to {seed}')
 #             set_seed(seed)
-# 
+#
 #         if len(time_windows) < 2:
 #             raise ValueError("time_windows must be a list of at least length 2")
 #         time_windows.sort()
 #         if weights is not None and len(weights) != num_samples:
 #             raise ValueError(f"weights must be None or of length {num_samples}")
-# 
+#
 #         logger.debug(f'Drawing {num_samples} samples from uniform +- {diff} around true value')
 #         pi_in, samples = self.get_uniform_initial_samples(
 #             num_samples=num_samples,
 #             scale=diff)
-# 
+#
 #         weights = [] if weights is None else weights
 #         best_flag = np.empty((num_samples, 1), dtype=bool)
 #         t0 = time_windows[0]
 #         probs = []
-#         restart = False 
+#         restart = False
 #         sample_groups = []                # List of lists of data chunks groups used by common set of samples
 #         sample_group = []                 # List for current iteration of data chunks used by common set of samples
-#         skip_intervals = []               # List of intervals where no solution was found  
+#         skip_intervals = []               # List of intervals where no solution was found
 #         for i, t in enumerate(time_windows[1:]):
 #             sample_group += [i]
 #             logger.debug(f"Getting measurements over time window {t0} to {t}")
 #             self.get_data(t - t0, t0=t0)
 #             measurements = get_df(self.data[-1].dropna(), 'q_lam_obs', self.n_sensors)
-# 
+#
 #             num_tries = 0
 #             solution_found = False
 #             prev_samples = samples
@@ -1089,7 +1128,7 @@ class DynamicModel:
 #             while not solution_found and num_tries < 2:
 #                 # Solve -> Saves states in state dictionary
 #                 self.forward_solve(samples, restart=restart)
-# 
+#
 #                 prob = PCAMUDProblem(
 #                     self.samples[-1],
 #                     measurements,
@@ -1097,7 +1136,7 @@ class DynamicModel:
 #                     pi_in=pi_in,
 #                 )
 #                 prob.set_weights(weights)
-# 
+#
 #                 try:
 #                     prob.solve(pca_components=list(range(nc)))
 #                 except ZeroDivisionError as z:
@@ -1110,7 +1149,7 @@ class DynamicModel:
 #                     e_r = prob.result["e_r"].values[0]
 #                     e_r_delta = np.abs(e_r - 1.0)
 #                     logger.info(f"Succesfully solved problem - e_r_delta = {e_r_delta}, kl = {prob.divergence_kl()}")
-# 
+#
 #                 # If failed to solve problem because we have refined our weights to much
 #                 # On the current set of samples, then resample from previous iterations updated distribution
 #                 # To start with a fresh set of samples and no weights
@@ -1143,12 +1182,12 @@ class DynamicModel:
 #                     logger.info(f"|E(r) - 1| = {e_r_delta} < {resample_thresh} - Keeping solution.")
 #                     logger.info(f"{prob.result}")
 #                     probs.append(prob)
-# 
+#
 #                     best_flag = np.empty((num_samples, 1), dtype=bool)
 #                     best_flag[:] = False
 #                     best_flag[prob.mud_arg] = True
 #                     self.samples[-1]['best_flag'] = best_flag
-# 
+#
 #                     solution_found = True
 #                     # Determine if new set of weights is too refined -> Calculate effective sample size
 #                     weights.append(prob.state["ratio"].values)
@@ -1170,20 +1209,20 @@ class DynamicModel:
 #                             sample_group = []
 #                         logger.info(f"Keeping samples.")
 #                         restart = False
-# 
+#
 #             if not solution_found:
 #                 logger.info(f"No good solution found. Skipping to next time window.")
 #                 pi_in = prev_pi_in
-#                 samples = prev_samples 
+#                 samples = prev_samples
 #                 restart = False
 #                 skip_intervals.append(i)
-# 
+#
 #             logger.info(f'Sample groups {sample_group}')
 #             t0 = t
-# 
+#
 #         return sample_groups, probs
-# 
-# 
+#
+#
 #     def plot_iterations(self, base_size=5):
 #         """
 #         Plot states over time
@@ -1197,12 +1236,12 @@ class DynamicModel:
 #         for prob in len(self.probs):
 #             for i, ax in enumerate(ax.flat):
 #                 prob.plot_L(param_idx=i, ax=ax)
-# 
+#
 #     def plot_param_density(self, probs, param_idx=0, idxs=None, figsize=(5,5), lam_true=None, ax=None):
-# 
+#
 #         if ax is None:
 #             fig, ax = plt.subplots(1, 1, figsize=figsize)
-# 
+#
 #         # Plot initial at first iteration
 #         labels = []
 #         idxs = np.arange(len(probs)) if idxs is None else idxs
@@ -1254,41 +1293,41 @@ class DynamicModel:
 #                 )
 #                 labels += [f'$\lambda^{{\dagger}}$']
 #         labels += l
-# 
+#
 #         ax.legend(labels)
-# 
+#
 #         return ax
-# 
+#
 #     def plot_param_densities(self, probs, idxs=None, figsize=None, base_size=5, lam_true=None):
 #         """
 #         TODO: FIx to general case when num_params != 4. Use grid_plot
 #         """
 #         fig, axs = plt.subplots(2, 2, figsize=figsize)
-# 
+#
 #         # idxs = np.arange(1, len(probs)-1, 1 if )
 #         grid_plot = self._closest_factors(self.n_params)
 #         fig, axs = plt.subplots(
 #             grid_plot[0],
 #             grid_plot[1],
-#             figsize=figsize if figsize is None else 
+#             figsize=figsize if figsize is None else
 #             (grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
 #         )
 #         for i, ax in enumerate(axs.flat):
 #             self.plot_param_density(probs, param_idx=i, idxs=idxs, ax=ax, lam_true=lam_true)
-#         
+#
 #         return axs
 #     # plot_iterations(probs, idxs=np.arange(0, 10, 2), lam_true=[SEIRS_P2])
-# 
+#
 #     def e_r_plot(self, probs, e_r_thresh=None, x_vals=None, x_label='Iteration', ax=None):
 #         """
 #         Plot the expected ratio
 #         """
 #         if ax is None:
 #             fig, ax = plt.subplots(figsize=(12, 6))
-# 
+#
 #         e_r = [p.expected_ratio() for p in probs]
 #         x_vals = np.arange(len(e_r)) if x_vals is None else x_vals
-# 
+#
 #         sns.lineplot(x=x_vals, y=e_r, ax=ax, label='Iterative Expected Ratio', marker="o")
 #         xlims = ax.get_xlim()
 #         if e_r_thresh is not None:
@@ -1296,64 +1335,64 @@ class DynamicModel:
 #         ax.hlines([1], xmin=xlims[0], xmax=xlims[1], color='black', linestyle=':', label='Predictability Assumption $\mathbb{E}(r)$ ≈ 1')
 #         ax.set_xlabel(x_label)
 #         ax.set_ylabel('$\mathbb{E}(r)$')
-# 
+#
 #     def kl_plot(self, probs, kl_thresh=None, x_vals=None, x_label='Iteration', ax=None):
 #         """
 #         Plot the expected ratio
 #         """
 #         if ax is None:
 #             fig, ax = plt.subplots(figsize=(12, 6))
-# 
+#
 #         d_kl = [p.divergence_kl() for p in probs]
 #         x_vals = np.arange(len(d_kl)) if x_vals is None else x_vals
-# 
+#
 #         sns.lineplot(x=x_vals, y=d_kl, color='green', ax=ax, label='$\mathrm{KL}(\pi^{up}_i | \pi^{up}_{i-1})$', marker="o")
 #         if kl_thresh is not None:
 #             ax.hlines([kl_thresh], xmin=xlims[0], xmax=xlims[1], color='orange', linestyle=':', label='KL Threshold')
-# 
+#
 #         ax.set_xlabel(x_label)
 #         ax.set_ylabel('$\mathrm{KL}()$')
-# 
+#
 #         return ax
-# 
+#
 #     def kl_delta_plot(self, probs, kl_thresh=None, x_vals=None, x_label='Iteration', ax=None):
 #         """
 #         Plot the expected ratio
 #         """
 #         if ax is None:
 #             fig, ax = plt.subplots(figsize=(12, 6))
-# 
+#
 #         d_kl = [p.divergence_kl() for p in probs]
 #         kl_delta = np.abs(np.array(d_kl[1:]) - np.array(d_kl[:-1]))
 #         x_vals = np.arange(1, len(kl_delta) + 1) if x_vals is None else x_vals
-# 
+#
 #         label = '$\Delta \mathrm{KL}(\pi^{up}_i | \pi^{up}_{i-1})$'
 #         sns.lineplot(x=x_vals, y=kl_delta, color='purple', ax=ax, label=label, marker="o")
-# 
+#
 #         if kl_thresh is not None:
 #             ax.hlines([kl_thresh], xmin=xlims[0], xmax=xlims[1], color='orange', linestyle=':', label='KL Threshold')
-# 
+#
 #         ax.set_xlabel('Iteration')
 #         ax.set_ylabel('$\Delta \mathrm{KL}()$')
-# 
+#
 #         return ax
-# 
+#
 #     def joint_metrics_plot(self, probs, e_r_thresh=None, kl_thresh=None, y1='e_r', y2='kl', x_vals=None, x_label='Iteration', ax=None):
 #         """
 #         Plot the expected ratio and KL divergence metrics for a set of problems
 #         """
 #         if ax is None:
 #             fig, ax = plt.subplots(figsize=(12, 6))
-#         
+#
 #         # Check y1 and y1 are iwthin set ['e_r', 'kl', 'kl_delta']
 #         if y1 not in ['e_r', 'kl', 'kl_delta'] or y2 not in ['e_r', 'kl', 'kl_delta']:
 #             raise ValueError('y1 and y2 must be in set ["e_r", "kl", "kl_delta"]')
 #         if y1 == y2:
 #             raise ValueError('y1 and y2 must be different')
-# 
+#
 #         e_r = [p.expected_ratio() for p in probs]
 #         d_kl = [p.divergence_kl() for p in probs]
-# 
+#
 #         axs = [ax]
 #         for i, y in enumerate([y1, y2]):
 #             if i > 0:
@@ -1365,8 +1404,8 @@ class DynamicModel:
 #                 kl_plot(probs, kl_thresh=kl_thresh, x_vals=x_vals, x_label=x_label, ax=ax)
 #             if y == 'kl_delta':
 #                 kl_delta_plot(probs, kl_thresh=kl_thresh, x_vals=x_vals, x_label=x_label, ax=ax)
-# 
+#
 #         axs[0].legend(loc='upper left')
 #         axs[1].legend(loc='upper right')
-# 
+#
 #         return axs

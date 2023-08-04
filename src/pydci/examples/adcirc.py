@@ -118,7 +118,9 @@ def plot_state(data, samples=None, mask=None, plot_intervals=None):
     fig, ax = plt.subplots(1, 1, figsize=(12, 7))
 
     mask = data.index.values if mask is None else mask
-    sns.lineplot(data.iloc[mask], x="ts", y="q_lam_true_0", label="True", linestyle='--', ax=ax)
+    sns.lineplot(
+        data.iloc[mask], x="ts", y="q_lam_true_0", label="True", linestyle="--", ax=ax
+    )
     sns.scatterplot(
         data.iloc[mask],
         x="ts",

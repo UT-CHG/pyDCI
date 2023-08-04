@@ -3,14 +3,14 @@ pyDCI Utilities
 
 """
 import pdb
-from typing import List, Tuple, Union, Dict, List, Any
+from itertools import product
+from typing import Any, Dict, List, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from numpy.linalg import LinAlgError
 from numpy.typing import ArrayLike
 from scipy.stats import gaussian_kde
-from itertools import product
 
 
 class KDEError(Exception):
@@ -51,17 +51,18 @@ def gkde(X, weights=None, label=None):
         elif "data appears to lie in a lower-dimensional" in str(e):
             msg = "scipy gaussian KDE failed - Degenerative data covariance."
             msg += "Can mean weights are too small or too few samples."
-            raise KDEError(X, weights=weights, name=label, msg=msg) 
+            raise KDEError(X, weights=weights, name=label, msg=msg)
         elif "leading minor of the array is not positive definite" in str(e):
             # TODO: Explain what this error means in message
-            raise KDEError(X, weights=weights, name=label, msg=str(e)) 
+            raise KDEError(X, weights=weights, name=label, msg=str(e))
         elif "Matrix is not positive definite" in str(e):
             # TODO: Explain what this error means in message
-            raise KDEError(X, weights=weights, name=label, msg=str(e)) 
+            raise KDEError(X, weights=weights, name=label, msg=str(e))
         else:
             raise e
     else:
         return res
+
 
 def set_seed(seed: int = None):
     """
@@ -69,6 +70,7 @@ def set_seed(seed: int = None):
     """
     if seed is not None:
         np.random.seed(seed)
+
 
 def add_noise(signal: ArrayLike, sd: float = 0.05, seed: int = None):
     """
@@ -235,6 +237,7 @@ def closest_factors(n: int) -> Tuple[int, int]:
         if n % i == 0:
             return (i, n // i)
 
+
 def generate_combinations(args_dict: Dict[str, List[Any]]) -> List[Dict[str, Any]]:
     """
     Generate a list of dictionaries with every combination of possible arguments for each key in the input dictionary.
@@ -260,8 +263,8 @@ def get_l2_errs(res_df, true_vals):
     Compute l2 error and relative error for each row in res_df
 
     """
-    mud_vals = get_df(res_df, 'lam_MUD', len(true_vals))
+    mud_vals = get_df(res_df, "lam_MUD", len(true_vals))
     l2_errs = np.linalg.norm(mud_vals - np.array(true_vals), axis=1)
-    res_df['l2_err'] = l2_errs
-    res_df['rel_err'] = l2_errs/np.linalg.norm(np.array(true_vals))
+    res_df["l2_err"] = l2_errs
+    res_df["rel_err"] = l2_errs / np.linalg.norm(np.array(true_vals))
     return res_df

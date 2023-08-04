@@ -53,7 +53,7 @@ from sklearn.preprocessing import StandardScaler  # type: ignore
 
 from pydci.consistent_bayes.MUDProblem import MUDProblem
 from pydci.log import disable_log, enable_log, log_table, logger
-from pydci.utils import KDEError, fit_domain, get_df, put_df, set_shape, closest_factors
+from pydci.utils import KDEError, closest_factors, fit_domain, get_df, put_df, set_shape
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -200,8 +200,9 @@ class PCAMUDProblem(MUDProblem):
             simulated data. If not specified, defaults to the min of the number
             of states and the number of parameters.
         """
-        pca_components = [pca_components] if isinstance(
-            pca_components, int) else pca_components
+        pca_components = (
+            [pca_components] if isinstance(pca_components, int) else pca_components
+        )
         self.q_pca(mask=pca_mask)
         all_qoi = self.q_lam
         self.q_lam = self.q_lam[:, pca_components]
@@ -257,7 +258,6 @@ class PCAMUDProblem(MUDProblem):
             pca_mask = np.arange(self.n_qoi) if pca_mask is None else pca_mask
             pca_splits = [
                 range(x[0], x[-1] + 1) for x in np.array_split(pca_mask, pca_splits)
-
             ]
         elif isinstance(pca_splits, list):
             if pca_mask is not None:
@@ -265,9 +265,9 @@ class PCAMUDProblem(MUDProblem):
                     "Cannot specify both pca_mask and non-integer pca_splits"
                 )
         iterations = [(i, j) for i in pca_splits for j in pca_components]
-        prev_in = self.dists['pi_in']
+        prev_in = self.dists["pi_in"]
         if len(iterations) == 0:
-            raise ValueError(f'No iterations specified: {pca_splits}, {pca_mask}')
+            raise ValueError(f"No iterations specified: {pca_splits}, {pca_mask}")
         for i, (pca_mask, pca_cs) in enumerate(iterations):
             str_val = pca_mask if pca_mask is not None else "ALL"
             logger.info(f"Iteration {i}: Solving using ({str_val}, {pca_cs})")
@@ -299,15 +299,17 @@ class PCAMUDProblem(MUDProblem):
                     l.msg = "Unknown linalg error on first iteration."
                     raise l
                 else:
-                    logger.info(f"({i}): PDF on constructed kde failed. " +
-                                f"Highly correlated data, or curse of dim - str({l})")
+                    logger.info(
+                        f"({i}): PDF on constructed kde failed. "
+                        + f"Highly correlated data, or curse of dim - str({l})"
+                    )
                     failed = True
             else:
                 e_r = self.result["e_r"].values[0]
                 if (diff := np.abs(e_r - 1.0)) > exp_thresh or failed:
                     logger.info(f"|E(r) - 1| = {diff} > {exp_thresh} - Stopping")
                     if i == 0:
-                        raise RuntimeError('No solution found within exp_thresh')
+                        raise RuntimeError("No solution found within exp_thresh")
                     failed = True
 
             if failed:
@@ -334,7 +336,7 @@ class PCAMUDProblem(MUDProblem):
                 if i != len(iterations) - 1:
                     logger.info("Updating weights")
                     weights.append(self.state["ratio"].values)
-                    prev_in = self.dists['pi_in']
+                    prev_in = self.dists["pi_in"]
 
         self.it_results = pd.concat(it_results)
         self.result = self.it_results.iloc[[-1]]
@@ -467,9 +469,9 @@ class PCAMUDProblem(MUDProblem):
             y = norm.pdf(x, loc=0, scale=1)
             sns.lineplot(
                 x=x,
-                y=y, 
+                y=y,
                 ax=ax,
-                label="$\pi^\mathrm{obs}_\mathcal{D} = \mathcal{N}(0, 1)$"
+                label="$\pi^\mathrm{obs}_\mathcal{D} = \mathcal{N}(0, 1)$",
             )
 
         return ax, labels
