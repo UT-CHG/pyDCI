@@ -142,10 +142,11 @@ class OfflineSequential(PCAMUDProblem):
     def solve(
         self,
         weights=None,
-        pca_components=[[0]],
+        pca_components=1,
         pca_mask: List[int] = None,
         pca_splits: List[int] = 1,
         exp_thresh: float = 0.5,
+        fail_on_partial: bool = True,
         state_extra: dict = None,
     ):
         """
@@ -166,6 +167,8 @@ class OfflineSequential(PCAMUDProblem):
             logger.error(msg)
             raise ValueError(msg)
         num_splits = 1
+        pca_components = [list(range(pca_components))] if isinstance(
+            pca_components, int) else pca_components
         if isinstance(pca_splits, int) or pca_splits is None:
             # Make even number of splits of all qoi if mask is not specified
             pca_mask = np.arange(self.n_qoi) if pca_mask is None else pca_mask
@@ -257,7 +260,10 @@ class OfflineSequential(PCAMUDProblem):
 
         self.it_results = pd.concat(it_results)
         self.result = self.it_results.iloc[[-1]]
-        self.result = self.result.drop(columns=["i", "pca_mask"])
+        self.result = self.result.drop(columns=["i"])
+
+        if fail_on_partial and len(self.it_results) < len(iterations):
+            raise RuntimeError("Failed to solve problem through all iterations")
 
     def get_iteration_state(self, iteration=-1):
         """
@@ -407,7 +413,7 @@ class OfflineSequential(PCAMUDProblem):
 
         Plots the initial distribution, the iterative updates, and the final solution
         as stored in the self.it_results and self.pca_states attributes of the
-        PCAMUDselflem object, which are updated during a PCAMUDselflem.solve_it() call.
+        PCAMUDselflem object, which are updated during a solve() call.
         The iterative updates correspond to using a re-weighted sequential data-consistent
         update, also known as "offline" sequential estimation, since iterations
         are performed on a static set of data/simulations.

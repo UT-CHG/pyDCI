@@ -59,7 +59,6 @@ class HeatModel(DynamicModel):
     def __init__(
         self,
         x0=None,
-        t0=0.0,
         measurement_noise=0.05,
         solve_ts=0.0001,
         sample_ts=0.1,
@@ -72,7 +71,11 @@ class HeatModel(DynamicModel):
         true_k_x=None,
         max_states=500,
         forcing_expression=None,
+        model_file=None,
     ):
+        if model_file is not None:
+            self.load(model_file)
+
         self.nx = nx
         self.ny = ny
         self.mean = mean
@@ -87,23 +90,27 @@ class HeatModel(DynamicModel):
         self.initial_condition = def_init if x0 is None else x0
         self.forcing_expression = forcing_expression
 
-        # Setup simulation
+        # Setup simulation - If loading from file lam_true is already set here.
+        if 'lam_true' in self.__dict__.keys():
+            logger.debug(f'Setting true_k_x to {self.lam_true} of type {type(self.lam_true)}')
+            true_k_x = self.lam_true
         logger.debug("Setting up simulation")
         self.setup_simulation(true_k_x=true_k_x)
+
+        # Set hard-coded value for max number of states to use.
+        self.MAX_STATES = max_states
 
         # Note we set a dummy lam_true for now because when we set thermal
         # diffusivity field we overwrite it with the true lam coefficients.
         super().__init__(
             self.uh.x.array.ravel(),
             self.lam_true,
-            t0=t0,
             measurement_noise=measurement_noise,
             solve_ts=solve_ts,
             sample_ts=sample_ts,
             param_mins=None,
             param_maxs=None,
             param_shifts=None,
-            max_states=max_states,
         )
 
     def project(self, field=None, mean=None, log=True):
@@ -111,26 +118,24 @@ class HeatModel(DynamicModel):
         Set thermal diffusivity field function over space
         """
         if field is None:
-            field = self.true_field
-
-        # make sure mean of KL expansion set
+            field = self.lam_true
         if mean is not None:
             self.mean = mean
 
-        # Work field into a KL expansion representation
+        # * Mean can be defined as function over coordiante grid or constant over whole grid.
         if isinstance(self.mean, float) or isinstance(self.mean, int):
             self.mean = float(self.mean) * np.ones(self.coords[:, 0].shape)
         elif isinstance(self.mean, Callable):
             self.mean = self.mean(self.coords[:, 0], self.coords[:, 1])
 
-        # Work field into a KL expansion representation
+        # * Field can either be a constant over coordinate grid, constant, or ndarray
         if isinstance(field, float) or isinstance(field, int):
             # Constant over the space
             field_vals = field * np.ones(len(self.coords[:, 0]))
         elif isinstance(field, Callable):
             # Project function onto space by evaluating over field
             field_vals = field([self.coords[:, 0], self.coords[:, 1]])
-        else:
+        elif not isinstance(field, np.ndarray):
             raise ValueError(
                 "field must be either a float/int for constant"
                 + "over domain or a function, an array of KL "
@@ -188,7 +193,10 @@ class HeatModel(DynamicModel):
         if true_k_x is None:
             self.lam_true = np.random.normal(0, 1, [1, self.nmodes])[0]
         else:
-            self.lam_true = self.project(field=true_k_x, mean=self.mean, log=True)
+            if isinstance(true_k_x, np.ndarray) and true_k_x.shape[0] == self.nmodes:
+                self.lam_true = true_k_x
+            else:
+                self.lam_true = self.project(field=true_k_x, mean=self.mean, log=True)
 
     def init_kl(self, lscales=None, nmodes=None, sd=None, normalize=False):
         """
@@ -393,7 +401,9 @@ class HeatModel(DynamicModel):
         return ax, kwargs
 
     def _process_field(self, field, project=False):
-        """ """
+        """
+        
+        """
         if field is None:
             field = self.reconstruct(self.lam_true)
         elif isinstance(field, Callable):

@@ -6,6 +6,7 @@ import pdb
 from itertools import product
 from typing import Any, Dict, List, Tuple, Union
 
+import math
 import numpy as np
 import pandas as pd
 from numpy.linalg import LinAlgError
@@ -268,3 +269,65 @@ def get_l2_errs(res_df, true_vals):
     res_df["l2_err"] = l2_errs
     res_df["rel_err"] = l2_errs / np.linalg.norm(np.array(true_vals))
     return res_df
+
+
+def get_search_combinations(
+    n_data,
+    n_params,
+    n_samples,
+    exp_thresh=1e10,
+    all_data=True,
+    pca_range=None,
+    mask_range=None,
+    split_range=None,
+    max_nc=5,
+    data_chunk_size=None,
+    max_num_combs=20,
+):
+    """
+    Determine search combinations for a given data chunk.
+    By default uses the last data chunk in the data list.
+
+    """
+    if data_chunk_size is None:
+        data_chunk_size = n_params if n_params <= n_data else n_data
+        if int(n_data / data_chunk_size) > 10:
+            data_chunk_size = int(n_data / 10)
+
+    def order_of_magnitude(n):
+        return int(math.log10(n)) + 1
+
+    # * 1. # PCA component : Restrict by min of n_params/max_nc, or n_samples
+    if pca_range is None:
+        max_nc = min(order_of_magnitude(n_samples), max_nc)
+        pca_range = range(min(max_nc, data_chunk_size))
+
+    # * 2. # Data Points : Increasing groups of data_chunk_size
+    if mask_range is None:
+        mask_range = (
+            [n_data]
+            if all_data
+            else range(data_chunk_size, n_data + 1, data_chunk_size)
+        )
+
+    # * 3. # Splits : 1 -> (# data/# data_chunk_size). Splits of data_chunk_size.
+    if split_range is None:
+        split_range = range(1, int(n_data / data_chunk_size) + 1)
+
+    search_list = [
+        {
+            "exp_thresh": exp_thresh,
+            "pca_components": [list(range(i + 1))],
+            "pca_mask": range(j),
+            "pca_splits": k,
+        }
+        for i in pca_range
+        for j in mask_range
+        for k in split_range
+        if j / (k * data_chunk_size) >= 1.0
+    ]
+
+    if len(search_list) > max_num_combs:
+        search_list = search_list[:max_num_combs]
+
+    return search_list

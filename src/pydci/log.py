@@ -10,6 +10,8 @@ from loguru import logger
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.text import Text
+from rich.traceback import install
+install(show_locals=True)
 
 
 def log_table(rich_table):

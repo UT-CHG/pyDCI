@@ -128,7 +128,6 @@ class PCAMUDProblem(MUDProblem):
         )
         self.qoi = self.q_lam
         self.pca_states = None
-        self.pca_results = None
 
     def q_pca(self, mask=None, max_nc=None):
         """
@@ -192,7 +191,7 @@ class PCAMUDProblem(MUDProblem):
         pca_mask: List[int], default=None
             Used control what subset of the observed data is used in the data
             constructed map `q_pca()`
-        components_mask: List[int], default=[0]
+        pca_components: List[int], default=[0]
             Used control what subset of pca components are used in Q_PCA map.
         max_nc: int, default=None
             Specifies the max number of principal components to use when doing
@@ -504,7 +503,7 @@ class PCAMUDProblem(MUDProblem):
         fig = axs[0].get_figure()
         fig.suptitle(
             self._parse_title(
-                result=self.result if nc is None else self.pca_results.loc[[nc]],
+                result=self.result,
                 lam_true=lam_true,
             )
         )

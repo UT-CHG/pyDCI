@@ -96,16 +96,17 @@ class DynamicModel:
             )
         self.state_idxs.sort()
         self.state_idxs = np.array(self.state_idxs)
-        logger.debug(f"State idxs set at: {state_idxs}")
+        logger.debug(f"State idxs set at {len(self.state_idxs)} of {self.n_states} total indices")
 
-        # * Measruements for each data window (i.e. iteration)
-        self.data = []
+        if 'data' not in dir(self):
+            # * Measruements for each data window (i.e. iteration)
+            self.data = []
 
-        # * Samples for each data window (i.e. iteration)
-        self.samples = []
+            # * Samples for each data window (i.e. iteration)
+            self.samples = []
 
-        # * Full final state for all samples for each iteration for hot-starting
-        self.samples_xf = []
+            # * Full final state for all samples for each iteration for hot-starting
+            self.samples_xf = []
 
     @property
     def n_params(self) -> int:
@@ -158,7 +159,7 @@ class DynamicModel:
                 return
         _ = [setattr(self, attr, None) for attr in req_attrs]
 
-        logger.info(f"Saving model state to file at {str(path)}")
+        logger.info(f"Loading model state from state file at {str(path)}")
         with pd.HDFStore(str(path), mode="r") as store:
             for key, val in store.items():
                 v_type = type(val)
@@ -170,7 +171,7 @@ class DynamicModel:
                 )
                 if isinstance(store[key], pd.DataFrame):
                     val = [
-                        d[1].reset_index(level=0, drop=True).dropna(axis=1)
+                        d[1].reset_index(level=0, drop=True)
                         for d in store[key].groupby(level=0)
                     ]
                     logger.debug(f"DF: {key}:{[v.head(n=1) for v in val[0:2]]}")
@@ -211,6 +212,7 @@ class DynamicModel:
                 logger.info("Save aborted {path} exists. Choose different path name")
                 return
 
+        logger.info(f"Saving model to state file at {str(path)}")
         with pd.HDFStore(path, mode="w") as store:
             to_rem = []
             for key, val in info_dict.items():
@@ -468,8 +470,6 @@ class DynamicModel:
                 self.samples[data_idx] = pd.concat(
                     [self.samples[data_idx], full_samples_df]
                 ).reset_index(drop=True)
-                logger.info(f"samples_xf: {samples_xf}")
-                logger.info(f"previous: {self.samples_xf[data_idx]}")
                 self.samples_xf[data_idx] = np.vstack(
                     [self.samples_xf[data_idx], samples_xf]
                 )

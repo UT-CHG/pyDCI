@@ -52,7 +52,7 @@ from sklearn.preprocessing import StandardScaler  # type: ignore
 
 from pydci import OfflineSequential
 from pydci.log import disable_log, enable_log, log_table, logger
-from pydci.utils import KDEError, closest_factors, fit_domain, get_df, put_df, set_shape
+from pydci.utils import KDEError, closest_factors, fit_domain, get_df, put_df, set_shape, get_search_combinations
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -123,8 +123,16 @@ class OfflineSequentialSearch:
         search_list=None,
         exp_thresh: float = 0.5,
         best_method: str = "closest",
-        def_args=None,
+        fail_on_partial: bool = True,
         pi_in=None,
+        search_exp_thresh: float = 1e10,
+        all_data=True,
+        pca_range=None,
+        mask_range=None,
+        split_range=None,
+        max_nc=5,
+        data_chunk_size=None,
+        max_num_combs=20,
     ):
         """
         Search through different iterations of solvign the PCA problem
@@ -144,14 +152,47 @@ class OfflineSequentialSearch:
             msg = f"Expected ratio thresh must be a float > 0: {exp_thresh}"
             raise ValueError(msg)
 
+        # TODO: Move this call to utility function, print pandata DataFrame if logger set
         search_list = (
-            self.get_search_combinations() if search_list is None else search_list
+            get_search_combinations(
+                self.n_meas,
+                self.n_params,
+                self.n_samples,
+                exp_thresh=search_exp_thresh,
+                all_data=all_data,
+                pca_range=pca_range,
+                mask_range=mask_range,
+                split_range=split_range,
+                max_nc=max_nc,
+                data_chunk_size=data_chunk_size,
+                max_num_combs=max_num_combs,
+            ) if search_list is None else search_list
         )
+        logger.info(f'Searching through combinations:\n{pd.DataFrame(search_list)}')
 
         pi_in = self.pi_in if pi_in is None else pi_in
         all_search_results = []
         all_results = []
         probs = []
+
+        def _append_result(p, i):
+            all_search_results.append(prob.it_results.copy())
+            all_search_results[-1]["search_index"] = idx
+            all_results.append(prob.result.copy())
+            all_results[-1]["search_index"] = idx
+            # res_df = None
+            # if 'result' in p.__dict__:
+            #     all_results.append(p.result.copy())
+            #     all_results[-1]["search_index"] = i
+            #     res_df = all_results[-1]
+            # if 'it_results' in p.__dict__:
+            #     all_search_results.append(p.it_results.copy())
+            #     all_search_results[-1]["search_index"] = i
+            # elif res_df is not None:
+            #     # * Failed on first iteration -> Copy result dataframe if in
+            #     all_search_results.append(res_df.copy())
+            #     all_search_results[-1]["i"] = 0  # For first iteration
+
         with alive_bar(
             len(search_list),
             title="Solving for different combinations",
@@ -167,24 +208,30 @@ class OfflineSequentialSearch:
                     pi_in=pi_in,
                 )
 
-                args.update(def_args if def_args is not None else {})
+                args.update(dict(
+                    exp_thresh=exp_thresh,
+                    fail_on_partial=fail_on_partial
+                ))
                 logger.debug(f"Attempting solve with args: {args}")
                 try:
                     prob.solve(**args, state_extra={"search_index": idx})
                 except ZeroDivisionError or KDEError or LinAlgError as e:
                     logger.error(f"Failed: Ill-posed problem: {e}")
-                    continue
                 except RuntimeError as r:
                     if "No solution found within exp_thresh" in str(r):
                         logger.error(f"Failed: No solution in exp_thresh: {r}")
-                        continue
+                        # _append_result(prob, idx)
+                    if "Failed to solve problem through all iterations" in str(r):
+                        logger.error(f"Failed: No solution found for all data: {r}")
+                        _append_result(prob, idx)
                     else:
                         raise r
                 else:
-                    all_search_results.append(prob.it_results.copy())
-                    all_search_results[-1]["search_index"] = idx
-                    all_results.append(prob.result.copy())
-                    all_results[-1]["search_index"] = idx
+                    _append_result(prob, idx)
+                    # all_search_results.append(prob.it_results.copy())
+                    # all_search_results[-1]["search_index"] = idx
+                    # all_results.append(prob.result.copy())
+                    # all_results[-1]["search_index"] = idx
 
                 probs.append(prob)
                 bar()
@@ -207,6 +254,7 @@ class OfflineSequentialSearch:
             )
             self.search_results = self._process_search_results(all_results, exp_thresh)
             self.result = self.search_results[self.search_results[best_method]]
+            logger.debug(f'Search results:\n{self.search_results}')
             self.best = (
                 None
                 if len(self.result) == 0
@@ -244,66 +292,6 @@ class OfflineSequentialSearch:
             res_df["within_thresh"],
         )
         return res_df
-
-    def get_search_combinations(
-        self,
-        exp_thresh=1e10,
-        all_data=True,
-        pca_range=None,
-        mask_range=None,
-        split_range=None,
-        max_nc=5,
-        data_chunk_size=None,
-        max_num_combs=20,
-    ):
-        """
-        Determine search combinations for a given data chunk.
-        By default uses the last data chunk in the data list.
-
-        """
-        n_data = len(self.measurements)
-        if data_chunk_size is None:
-            data_chunk_size = self.n_params if self.n_params <= n_data else n_data
-            if int(n_data / data_chunk_size) > 10:
-                data_chunk_size = int(n_data / 10)
-
-        def order_of_magnitude(n):
-            return int(math.log10(n)) + 1
-
-        # * 1. # PCA component : Restrict by n_sensors available
-        if pca_range is None:
-            max_nc = min(order_of_magnitude(self.n_samples), max_nc)
-            pca_range = range(min(max_nc, data_chunk_size))
-        logger.debug(f"PCA search range {pca_range}")
-
-        # * 2. # Data Points to Use : Increasing groups of data_chunk_size.
-        if mask_range is None:
-            mask_range = (
-                [n_data]
-                if all_data
-                else range(data_chunk_size, n_data + 1, data_chunk_size)
-            )
-        logger.debug(f"Data chunk end points: {mask_range}")
-
-        # * 3. # Splits : 1 -> (# data/# data_chunk_size). Splits of data_chunk_size.
-        if split_range is None:
-            split_range = range(1, int(n_data / data_chunk_size) + 1)
-        logger.debug(f"# of splits: {split_range}")
-
-        search_list = [
-            {
-                "exp_thresh": exp_thresh,
-                "pca_components": [list(range(i + 1))],
-                "pca_mask": range(j),
-                "pca_splits": k,
-            }
-            for i in pca_range
-            for j in mask_range
-            for k in split_range
-            if j / (k * data_chunk_size) >= 1.0
-        ]
-
-        return search_list
 
     def plot_param_updates(
         self,

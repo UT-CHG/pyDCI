@@ -62,6 +62,11 @@ class OnlineSequential:
         self.model_file = model_file
         self.def_init = def_init
 
+        if self.model_file is not None:
+            # Initialize model (which is a class not an instance in this case)
+            logger.deubg(f'Loading model from file {model_file}')
+            self.model = model(file=self.model_file)
+
         self.probs = []
 
     @property
@@ -75,6 +80,15 @@ class OnlineSequential:
     @property
     def n_sensors(self) -> int:
         return len(self.model.state_idxs)
+
+    def get_num_measurements(self, data_idx=-1) -> int:
+        """
+        Get number of measurements for a given data chunk index.
+        """
+        data_idx = data_idx if data_idx != -1 else len(self.model.data) - 1
+        if data_idx < 0 or data_idx >= len(self.model.data):
+            raise ValueError(f"Invalid data_idx: {data_idx} > {len(self.model.data)}.")
+        return self.model.data[data_idx].dropna().shape[0] * self.n_sensors
 
     def get_initial_samples(self, dist=None, num_samples=100, **kwargs):
         """
@@ -162,6 +176,52 @@ class OnlineSequential:
                     if input("Continue? (y/n): ") != "y":
                         return
             setattr(self, attr, [])
+
+    def solve_till_thresh(
+        self,
+        data_idx,
+        start_sample_size=100,
+        max_samples=200,
+        samples_inc=10,
+        pi_in=None,
+        sampling_args={},
+        solve_args={},
+    ):
+        """
+        """
+        data_idx = data_idx if data_idx != -1 else len(self.model.data) - 1
+        if len(self.model.samples) <= data_idx:
+            # * First batch if not continuing from previous solve
+            pi_in, samples = self.get_initial_samples(
+                num_samples=start_sample_size, **sampling_args
+            )
+            self.model.forward_solve(samples, append=True)
+
+        sample_size = len(self.model.samples[data_idx])
+        solved = False
+        prob = None
+        while not solved and sample_size < max_samples:
+            logger.debug(f"Solving using {sample_size} samples")
+            prob = OfflineSequentialSearch(
+                self.model.samples[data_idx],
+                self.model.data[data_idx],
+                self.model.measurement_noise,
+                pi_in=pi_in,
+            )
+            try:
+                prob.solve(**solve_args)
+            except RuntimeError as r:
+                logger.debug(f"Failed: {r}")
+                logger.debug(f"Drawing {samples_inc} more samples.")
+                _, samples = self.get_initial_samples(
+                    num_samples=samples_inc, **sampling_args)
+                sample_size += samples_inc
+                logger.debug(f"Solving forward model for {samples_inc} more samples")
+                self.model.forward_solve(samples, append=True)
+            else:
+                solved = True
+            
+        return prob
 
     def solve(
         self,
