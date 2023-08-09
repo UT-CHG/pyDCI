@@ -180,18 +180,6 @@ class OfflineSequentialSearch:
             all_search_results[-1]["search_index"] = idx
             all_results.append(prob.result.copy())
             all_results[-1]["search_index"] = idx
-            # res_df = None
-            # if 'result' in p.__dict__:
-            #     all_results.append(p.result.copy())
-            #     all_results[-1]["search_index"] = i
-            #     res_df = all_results[-1]
-            # if 'it_results' in p.__dict__:
-            #     all_search_results.append(p.it_results.copy())
-            #     all_search_results[-1]["search_index"] = i
-            # elif res_df is not None:
-            #     # * Failed on first iteration -> Copy result dataframe if in
-            #     all_search_results.append(res_df.copy())
-            #     all_search_results[-1]["i"] = 0  # For first iteration
 
         with alive_bar(
             len(search_list),
@@ -209,7 +197,6 @@ class OfflineSequentialSearch:
                 )
 
                 args.update(dict(
-                    exp_thresh=exp_thresh,
                     fail_on_partial=fail_on_partial
                 ))
                 logger.debug(f"Attempting solve with args: {args}")
@@ -228,10 +215,6 @@ class OfflineSequentialSearch:
                         raise r
                 else:
                     _append_result(prob, idx)
-                    # all_search_results.append(prob.it_results.copy())
-                    # all_search_results[-1]["search_index"] = idx
-                    # all_results.append(prob.result.copy())
-                    # all_results[-1]["search_index"] = idx
 
                 probs.append(prob)
                 bar()

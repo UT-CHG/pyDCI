@@ -97,7 +97,7 @@ def build_ds(
     return ret
 
 
-def plot_state(data, samples=None, mask=None, plot_intervals=None):
+def plot_state(data, samples=None, mask=None, plot_intervals=None, ax=None):
     """
     Plots the true state, observed state, and samples of the state, with
     state being the observed water level at the recording station in the grid.
@@ -115,11 +115,12 @@ def plot_state(data, samples=None, mask=None, plot_intervals=None):
         being a tuploe of tuples of start and end indices.
 
     """
-    fig, ax = plt.subplots(1, 1, figsize=(12, 7))
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(12, 7))
 
     mask = data.index.values if mask is None else mask
     sns.lineplot(
-        data.iloc[mask], x="ts", y="q_lam_true_0", label="True", linestyle="--", ax=ax
+        data.iloc[mask], x="ts", y="q_lam_true_0", label="True",color='black', linestyle="--", ax=ax
     )
     sns.scatterplot(
         data.iloc[mask],
@@ -154,20 +155,58 @@ def plot_state(data, samples=None, mask=None, plot_intervals=None):
                 alpha=0.1,
                 label=label,
             )
+    
+    ax = plot_interval_lines(data, plot_intervals, ax=ax)
 
-    plot_intervals = [] if plot_intervals is None else plot_intervals
-    for name, args, intervals in plot_intervals:
-        for interval in intervals:
-            ax.axvline(data["ts"][interval[0]], **args)
-        args["label"] = name
-        ax.axvline(data["ts"][intervals[-1][-1]], **args)
-
-    # ax.set_title('Time Window 3')
-    # ax.set_title(f'lam_true = {data["lam_true_0"].values[0]}, {data["lam_true_1"].values[0]}')
     ax.set_ylabel("Water Elevation (m)")
     ax.set_xlabel("Time")
     ax.legend()
 
+    return ax
+
+
+def plot_wind(data, wind_data, time_window=None, plot_intervals=None, ax=None, figsize=(12, 7)):
+    """
+    """
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(12, 7))
+
+    plot_data = wind_data
+    if time_window is not None:
+        plot_data = wind_data[
+            (wind_data["time"] >= time_window[0]) & (wind_data["time"] <= time_window[1])
+        ]
+    sns.lineplot(
+        plot_data,
+        x="time",
+        y="wind_speed",
+        label="Wind Speed",
+        ax=ax,
+        marker="o",
+        color="green",
+    )
+
+    ax = plot_interval_lines(data, plot_intervals, ax=ax)
+
+    ax.set_ylabel("Wind Speed (m/s)")
+    ax.set_xlabel("Time")
+    ax.legend(loc="lower left")
+
+    return ax
+
+
+def plot_interval_lines(data, plot_intervals=None, ax=None):
+    """
+    """
+    time_col = 'ts' if 'ts' in data.columns else 'time'
+    plot_intervals = [] if plot_intervals is None else plot_intervals
+    for name, args, intervals in plot_intervals:
+        for interval in intervals:
+            args["label"] = None
+            ax.axvline(data[time_col][interval[0]], **args)
+        args["label"] = name
+        ax.axvline(data[time_col][intervals[-1][-1]], **args)
+    
     return ax
 
 
