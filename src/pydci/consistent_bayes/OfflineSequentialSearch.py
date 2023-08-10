@@ -185,7 +185,7 @@ class OfflineSequentialSearch:
             len(search_list),
             title="Solving for different combinations",
             force_tty=True,
-            receipt=True,
+            receipt=False,
             length=40,
         ) as bar:
             for idx, args in enumerate(search_list):

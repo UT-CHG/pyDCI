@@ -37,7 +37,13 @@ def log_table(rich_table):
     return Text.from_ansi(capture.get())
 
 
-def enable_log(file=None, level="INFO", fmt=None, serialize=False):
+def enable_log(
+    file=None,
+    level="INFO",
+    fmt=None,
+    serialize=False,
+    filter=None
+):
     """
     Turn on logging for module with appropriate message format
 
@@ -63,6 +69,7 @@ def enable_log(file=None, level="INFO", fmt=None, serialize=False):
                     "sink": RichHandler(markup=True, rich_tracebacks=True),
                     "level": level,
                     "format": fmt,
+                    "filter": filter,
                 }
             ]
         )
@@ -73,7 +80,7 @@ def enable_log(file=None, level="INFO", fmt=None, serialize=False):
         fmt = def_fmt if fmt is None else fmt
         logger.configure(
             handlers=[
-                {"sink": file, "serialize": serialize, "level": level, "format": fmt}
+                {"sink": file, "serialize": serialize, "level": level, "format": fmt, "filter": filter}
             ]
         )
     logger.enable("pydci")
