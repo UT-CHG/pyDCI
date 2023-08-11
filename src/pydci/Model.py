@@ -107,6 +107,8 @@ class DynamicModel:
 
             # * Full final state for all samples for each iteration for hot-starting
             self.samples_xf = []
+        
+        self._init_state = self._info_dict()
 
     @property
     def n_params(self) -> int:
@@ -123,6 +125,38 @@ class DynamicModel:
     @property
     def n_intervals(self) -> int:
         return len(self.data)
+
+    def reset(self, warn=True):
+        """
+        Reset model state to original state at initialization
+        """
+        if warn:
+            res = input(
+                f"Resetting {self.n_intervals} intervals of data. Continue? (y/N):"
+            )
+            if res.lower() != "y":
+                logger.info("Reset aborted.")
+                return
+        for k, v in self._init_state.items():
+            logger.debug(f"Resetting model attr {k} to {v}")
+            setattr(self, k, v)
+
+    def _info_dict(self):
+        """
+        Get dictionary of model attributes
+        """
+        allowable_types = [int, float, str, bool, list, pd.DataFrame, np.ndarray]
+        info_dict = dict(
+            [
+                (x, getattr(self, x))
+                for x in dir(self)
+                if type(getattr(self, x)) in allowable_types
+                and not x.startswith("_")
+                and not x.startswith("n_")
+                and not x.isupper()
+            ]
+        )
+        return info_dict
 
     def load(self, path=None):
         """
@@ -429,6 +463,7 @@ class DynamicModel:
             if isinstance(self.samples_xf[data_idx - 1], pd.DataFrame):
                 self.samples_xf[data_idx - 1] = self.samples_xf[data_idx - 1].to_numpy()
             samples_x0 = self.samples_xf[data_idx - 1]
+            append = False
         else:
             logger.debug(f"Starting fresh simulation for {len(samples)}")
             # samples = np.vstack([self.samples[data_idx], samples])
@@ -494,7 +529,7 @@ class DynamicModel:
 
         return init_conds
 
-    def get_initial_samples(self, num_samples=100, **kwargs):
+    def get_initial_samples(self, num_samples=100, dist=None, **kwargs):
         """
         Wrapper method around different methods for generating initial samples.
         Model class by default has a uniform distribution over the parameter
@@ -515,13 +550,15 @@ class DynamicModel:
         dist, samples: tuple
             Tuple of the distribution object and the samples generated from it.
         """
-        if self.def_init[0] == "uniform":
+        dist = self.def_init[0] if dist is None else dist 
+        args = self.def_init[1] if kwargs == {} else kwargs
+        if dist == "uniform":
             return self.get_uniform_initial_samples(
-                num_samples=num_samples, **self.def_init[1]
+                num_samples=num_samples, **args
             )
-        elif self.def_init[0] == "normal":
+        elif dist == "normal":
             return self.get_normal_initial_samples(
-                num_samples=num_samples, **self.def_init[1]
+                num_samples=num_samples, **args
             )
         else:
             raise ValueError(f"Unrecognized distribution: {dist}")

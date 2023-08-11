@@ -155,18 +155,70 @@ class MUDProblem(DCIProblem):
         self.mud_point = mud_point[0]
         self.mud_arg = m
 
-    def get_mud_point(self, state_df=None):
+    def get_mud_point(self, state_df: pd.DataFrame = None) -> tuple:
         """
-        Get MUD Point from DataFrame
+        Get MUD Point from DataFrame.
 
         Get MUD point from DataFrame. If DataFrame is not passed in, use the
         `result` attribute of the class.
+
+        Parameters
+        ----------
+        state_df : DataFrame, optional
+            The state DataFrame. If not provided, the method will use the `state`
+            attribute of the class.
+
+        Returns
+        -------
+        tuple
+            A tuple containing the index of the maximum "pi_up" value in the
+            DataFrame and the MUD point calculated using the `get_df` method
+            with the "lam" column and `n_params` attribute of the class.
+
         """
         if state_df is None:
             state_df = self.state
+
         m = np.argmax(state_df["pi_up"])
         mud_point = get_df(state_df.iloc[[m]], "lam", size=self.n_params)
+
         return m, mud_point
+
+    def compute_l2_errs(self, lam_true: np.ndarray = None, result_df: pd.DataFrame = None) -> None:
+        """
+        Compute L2 errors between the true lambda values and MUD point.
+
+        If `lam_true` is not provided, the function will return without performing any computation.
+        The function computes both absolute and relative L2 errors and updates the `result` attribute
+        of the class with the calculated errors.
+
+        Parameters
+        ----------
+        lam_true : ndarray, optional
+            The true lambda values. If not provided, the function returns without performing
+            any computations.
+
+        Returns
+        -------
+        None
+            The function modifies the `result` attribute of the class in-place and does not return
+            a value.
+        """
+        res_df = self.result if result_df is None else result_df
+        mud_point = self.get_mud_point()[1]
+
+        if lam_true is not None:
+            lam_true = np.reshape(lam_true, (1, -1))
+            res_df['l2_err'] = np.linalg.norm(lam_true - mud_point)
+            res_df['rel_l2_err'] = res_df['l2_err'] / np.linalg.norm(lam_true)
+            for i in range(self.n_params):
+                res_df[f'l2_err_{i}'] = np.linalg.norm(lam_true[0, i] - mud_point[0, i])
+                res_df[f'rel_l2_err_{i}'] = res_df[f'l2_err_{i}'] / np.linalg.norm(lam_true[0, i])
+
+        if result_df is not None:
+            return res_df
+
+        self.result = res_df
 
     def plot_L(
         self,

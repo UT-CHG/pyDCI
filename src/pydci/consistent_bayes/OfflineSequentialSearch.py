@@ -125,6 +125,7 @@ class OfflineSequentialSearch:
         best_method: str = "closest",
         fail_on_partial: bool = True,
         pi_in=None,
+        weights=None,
         search_exp_thresh: float = 1e10,
         all_data=True,
         pca_range=None,
@@ -197,7 +198,8 @@ class OfflineSequentialSearch:
                 )
 
                 args.update(dict(
-                    fail_on_partial=fail_on_partial
+                    fail_on_partial=fail_on_partial,
+                    weights=weights,
                 ))
                 logger.debug(f"Attempting solve with args: {args}")
                 try:
@@ -207,11 +209,12 @@ class OfflineSequentialSearch:
                 except RuntimeError as r:
                     if "No solution found within exp_thresh" in str(r):
                         logger.error(f"Failed: No solution in exp_thresh: {r}")
-                        # _append_result(prob, idx)
-                    if "Failed to solve problem through all iterations" in str(r):
+                        _append_result(prob, idx)
+                    elif "Failed to solve problem through all iterations" in str(r):
                         logger.error(f"Failed: No solution found for all data: {r}")
                         _append_result(prob, idx)
                     else:
+                        logger.error(f"Failed: Unknown error: {r}. Contact developer.")
                         raise r
                 else:
                     _append_result(prob, idx)
@@ -252,6 +255,105 @@ class OfflineSequentialSearch:
             logger.error(msg)
             raise RuntimeError(msg)
 
+    def get_mud_point(self, state_df: pd.DataFrame = None) -> tuple:
+        """
+        Get MUD Point from DataFrame.
+
+        Get MUD point from DataFrame. If DataFrame is not passed in, use the
+        `result` attribute of the class.
+
+        Parameters
+        ----------
+        state_df : DataFrame, optional
+            The state DataFrame. If not provided, the method will use the `state`
+            attribute of the class.
+
+        Returns
+        -------
+        tuple
+            A tuple containing the index of the maximum "pi_up" value in the
+            DataFrame and the MUD point calculated using the `get_df` method
+            with the "lam" column and `n_params` attribute of the class.
+
+        """
+        if state_df is None and self.best is None:
+            raise AttributeError('No best solution found. Run `solve` method first')
+        if state_df is None:
+            state_df = self.best
+
+        m = np.argmax(state_df["pi_up"])
+        mud_point = get_df(state_df.iloc[[m]], "lam", size=self.n_params)
+
+        return m, mud_point
+
+    def expected_ratio(self, search_idx: int = None, iteration: int = None):
+        """Expectation Value of R
+
+        Returns the expectation value of the R, the ratio of the observed to
+        the predicted density values.
+
+        If the predictability assumption for the data-consistent framework is
+        satisfied, then this values should be close to 1.0.
+
+        Returns
+        -------
+        expected_ratio : float
+            Value of the E(r). Should be close to 1.0.
+        """
+        if search_idx is None:
+            if self.best is None:
+                raise AttributeError('No best solution found. Run `solve` method first')
+            return self.best.expected_ratio(iteration=iteration)
+        else:
+            return self.probs[search_idx].expected_ratio(iteration=iteration)
+
+    def divergence_kl(self, search_idx: int = None, iteration: int = None):
+        """KL-Divergence Between observed and predicted.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        kl: float
+            Value of the kl divergence.
+        """
+        if search_idx is None:
+            if self.best is None:
+                raise AttributeError('No best solution found. Run `solve` method first')
+            return self.best.divergence_kl(iteration=iteration)
+        else:
+            return self.probs[search_idx].divergence_kl(iteration=iteration)
+
+    def sample_dist(self, num_samples: int = 1, dist="pi_up", search_idx: int = None):
+        """
+        Sample Stored Distribution
+
+        Samples from stored distribtuion. By default samples from updated
+        distribution on parameter samples, but also can draw samples from any
+        stored distribtuion: pi_in, pi_pr, pi_obs, and pi_up.
+
+        Parameters
+        ----------
+        dist: optional, default='pi_up'
+            Distribution to samples from. By default sample from the update
+            distribution
+        num_samples: optional, default=1
+            Number of samples to draw from distribtuion
+
+        Returns
+        -------
+        samples: ArrayLike
+            Samples from the udpated distribution. Dimension of array is
+            (num_samples * num_params)
+        """
+        if search_idx is None:
+            prob = self.best
+        else:
+            prob = self.probs[search_idx]
+
+        return prob.sample_dist(num_samples=num_samples, dist=dist)
+
     def _process_search_results(
         self,
         dfs,
@@ -259,22 +361,23 @@ class OfflineSequentialSearch:
     ):
         """ """
         res_df = pd.concat(dfs)
-        res_df["predict_delta"] = np.abs(res_df["e_r"] - 1.0)
-        res_df["within_thresh"] = res_df["predict_delta"] <= exp_thresh
-        res_df["closest"] = np.logical_and(
-            res_df["predict_delta"]
-            <= res_df[res_df["within_thresh"]]["predict_delta"].min(),
-            res_df["within_thresh"],
-        )
-        res_df["max_kl"] = np.logical_and(
-            res_df["kl"] >= res_df[res_df["within_thresh"]]["kl"].max(),
-            res_df["within_thresh"],
-        )
-        res_df["min_kl"] = np.logical_and(
-            res_df["kl"] <= res_df[res_df["within_thresh"]]["kl"].min(),
-            res_df["within_thresh"],
-        )
-        return res_df
+        if 'e_r' in res_df.columns:
+            res_df["predict_delta"] = np.abs(res_df["e_r"] - 1.0)
+            res_df["within_thresh"] = res_df["predict_delta"] <= exp_thresh
+            res_df["closest"] = np.logical_and(
+                res_df["predict_delta"]
+                <= res_df[res_df["within_thresh"]]["predict_delta"].min(),
+                res_df["within_thresh"],
+            )
+            res_df["max_kl"] = np.logical_and(
+                res_df["kl"] >= res_df[res_df["within_thresh"]]["kl"].max(),
+                res_df["within_thresh"],
+            )
+            res_df["min_kl"] = np.logical_and(
+                res_df["kl"] <= res_df[res_df["within_thresh"]]["kl"].min(),
+                res_df["within_thresh"],
+            )
+            return res_df
 
     def plot_param_updates(
         self,

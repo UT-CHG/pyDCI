@@ -18,7 +18,7 @@ from alive_progress import alive_bar
 from matplotlib.patches import Rectangle
 from numpy.linalg import LinAlgError
 from rich.table import Table
-from scipy.stats import multivariate_normal
+from scipy.stats import multivariate_normal, gaussian_kde
 from scipy.stats.distributions import uniform
 
 from pydci import OfflineSequential, OfflineSequentialSearch
@@ -55,12 +55,10 @@ class OnlineSequential:
         model,
         time_step=1,
         model_file=None,
-        def_init="uniform",
     ):
         self.model = model
-        self.time_Step = time_step
+        self.time_step = time_step
         self.model_file = model_file
-        self.def_init = def_init
 
         if self.model_file is not None:
             # Initialize model (which is a class not an instance in this case)
@@ -68,6 +66,8 @@ class OnlineSequential:
             self.model = model(file=self.model_file)
 
         self.probs = []
+        self.it_results = []
+        self.result = None
 
     @property
     def n_params(self) -> int:
@@ -89,163 +89,6 @@ class OnlineSequential:
         if data_idx < 0 or data_idx >= len(self.model.data):
             raise ValueError(f"Invalid data_idx: {data_idx} > {len(self.model.data)}.")
         return self.model.data[data_idx].dropna().shape[0] * self.n_sensors
-
-    def get_initial_samples(self, dist=None, num_samples=100, **kwargs):
-        """
-        Wrapper method around different methods for generating initial samples.
-        Model class by default has a uniform distribution over the parameter
-        space surronding the 'true' parameter, or initial parameter guess.
-
-        Parameters
-        ----------
-        dist : str
-            Distribution to use for generating initial samples. Options are
-            'uniform' and 'normal'.
-        num_samples : int
-            Number of samples to generate.
-        kwargs : dict
-            Additional keyword arguments to pass to the distribution specific method.
-
-        Returns
-        -------
-        dist, samples: tuple
-            Tuple of the distribution object and the samples generated from it.
-        """
-        dist = self.def_init if dist is None else dist
-        if dist == "uniform":
-            return self.get_uniform_initial_samples(num_samples=num_samples, **kwargs)
-        elif dist == "normal":
-            return self.get_normal_initial_samples(num_samples=num_samples, **kwargs)
-        else:
-            raise ValueError(f"Unrecognized distribution: {dist}")
-
-    def get_uniform_initial_samples(
-        self,
-        num_samples=1000,
-        domain=None,
-        center=None,
-        scale=0.5,
-        mins=None,
-        maxs=None,
-    ):
-        """
-        Generate initial samples from uniform distribution over domain set by
-        `self.set_domain`.
-        """
-        if domain is None:
-            domain = get_uniform_box(
-                center, factor=scale, mins=mins, maxs=maxs
-            )
-        loc = domain[:, 0]
-        scale = domain[:, 1] - domain[:, 0]
-        logger.info(
-            f"Drawing {num_samples} from uniform at:\n"
-            + f"\tloc: {loc}\n\tscale: {scale}"
-        )
-        dist = uniform(loc=loc, scale=scale)
-        samples = dist.rvs(size=(num_samples, self.n_params))
-        return dist, samples
-
-    def get_normal_initial_samples(self, num_samples=100, mean=1.0, std_dev=1.0):
-        """
-        Generate initial samples from uniform distribution over domain set by
-        `self.set_domain`.
-        """
-        # Draw from n-dimensional Gaussian centered at `mean` with `std_dev` variance
-        # Dimension equal to dimension of `self.n_params`
-        logger.info(
-            f"Drawing {num_samples} from multivariate normal at:\n"
-            + f"\tmean: {mean}\n\tstd_dev: {std_dev}"
-        )
-        mean = np.ones(self.n_params) * mean if isinstance(mean, (int, float)) else mean
-        std_dev = (
-            np.ones(self.n_params) * std_dev
-            if isinstance(std_dev, (int, float))
-            else std_dev
-        )
-        dist = multivariate_normal(mean=mean, cov=std_dev)
-        samples = dist.rvs(size=num_samples)
-        return dist, samples
-
-    def check_overwrite(self, attr="probs", overwrite=False):
-        """ """
-        # See if probs and data already exist, if so prompt user to continue if we want to delete them to start fresh
-        already_yes = False
-        attr_val = getattr(self, attr)
-        if len(attr_val) > 0:
-            if not overwrite and not already_yes:
-                logger.warning(
-                    "This model already has a set of samples/data/probs. Continuing will delete these and start fresh."
-                )
-                if not already_yes:
-                    if input("Continue? (y/n): ") != "y":
-                        return
-            setattr(self, attr, [])
-
-    def solve_till_thresh(
-        self,
-        data_idx,
-        exp_thresh=0.1,
-        start_sample_size=100,
-        max_sample_size=200,
-        samples_inc=10,
-        pi_in=None,
-        sampling_args={},
-        clear=False,
-        **solve_args,
-    ):
-        """
-        """
-        data_idx = data_idx if data_idx != -1 else len(self.model.data) - 1
-
-        def _get_samples(init, ss):
-            if init is None:
-                init, samples = self.model.get_initial_samples(
-                    num_samples=ss, **sampling_args
-                )
-            else:
-                if not isinstance(init, gaussian_kde):
-                    samples = init.rvs((ss, self.model.n_params)).T
-                else:
-                    samples = init.resample(ss).T
-
-            return init, samples
-
-        if len(self.model.samples) <= data_idx or clear:
-            # * First batch if not continuing from previous solve
-            # * Or if clearing previous solve when clear = True
-            pi_in, samples = _get_samples(pi_in, start_sample_size)
-            self.model.forward_solve(samples, append=False)
-
-        sample_size = len(self.model.samples[data_idx])
-        solved = False
-        while not solved:
-            logger.debug(f"Solving using {sample_size} samples")
-            prob = oss.OfflineSequentialSearch(
-                self.model.samples[data_idx],
-                self.model.data[data_idx],
-                self.model.measurement_noise,
-                pi_in=pi_in,
-            )
-            solve_args['exp_thresh'] = exp_thresh
-            try:
-                prob.solve(**solve_args)
-            except RuntimeError as r:
-                logger.debug(f"Failed: {r}")
-            else:
-                solved = True
-
-            if sample_size >= max_sample_size:
-                logger.debug(f"Reached max sample size of {max_sample_size}")
-                break
-            elif not solved:
-                logger.debug(f"Drawing {samples_inc} more samples.")
-                samples = _get_samples(pi_in, samples_inc)
-                sample_size += samples_ic
-                logger.debug(f"Solving forward model for {samples_inc} more samples")
-                self.model.forward_solve(samples, append=True)
-
-        return prob
 
     def plot_iterations(self, base_size=5):
         """
@@ -371,7 +214,7 @@ class OnlineSequential:
     # plot_iterations(probs, idxs=np.arange(0, 10, 2), lam_true=[SEIRS_P2])
 
     def e_r_plot(
-        self, probs=None, e_r_thresh=None, x_vals=None, x_label="Iteration", ax=None
+        self, results=None, e_r_thresh=None, x_vals='data_idx', x_label="Iteration", ax=None
     ):
         """
         Plot the expected ratio
@@ -379,13 +222,11 @@ class OnlineSequential:
         if ax is None:
             fig, ax = plt.subplots(figsize=(12, 6))
 
-        probs = self.probs if probs is None else probs
-
-        e_r = [p.expected_ratio() for p in probs]
-        x_vals = np.arange(len(e_r)) if x_vals is None else x_vals
+        if results is None:
+            results = pd.concat(self.it_results)
 
         sns.lineplot(
-            x=x_vals, y=e_r, ax=ax, label="Iterative Expected Ratio", marker="o"
+            results.dropna(), x=x_vals, y='e_r', ax=ax, label="Iterative Expected Ratio", marker="o"
         )
         xlims = ax.get_xlim()
         if e_r_thresh is not None:
@@ -409,7 +250,7 @@ class OnlineSequential:
         ax.set_ylabel("$\mathbb{E}(r)$")
 
     def kl_plot(
-        self, probs=None, kl_thresh=None, x_vals=None, x_label="Iteration", ax=None
+        self, results=None, kl_thresh=None, x_vals='data_idx', x_label="Iteration", ax=None
     ):
         """
         Plot the expected ratio
@@ -417,14 +258,13 @@ class OnlineSequential:
         if ax is None:
             fig, ax = plt.subplots(figsize=(12, 6))
 
-        probs = self.probs if probs is None else probs
-
-        d_kl = [p.divergence_kl() for p in probs]
-        x_vals = np.arange(len(d_kl)) if x_vals is None else x_vals
+        if results is None:
+            results = pd.concat(self.it_results)
 
         sns.lineplot(
+            results.dropna(),
             x=x_vals,
-            y=d_kl,
+            y='kl',
             color="green",
             ax=ax,
             label="$\mathrm{KL}(\pi^{up}_i | \pi^{up}_{i-1})$",
@@ -446,7 +286,7 @@ class OnlineSequential:
         return ax
 
     def kl_delta_plot(
-        self, probs=None, kl_thresh=None, x_vals=None, x_label="Iteration", ax=None
+        self, results=None, kl_thresh=None, x_vals='data_idx', x_label="Iteration", ax=None
     ):
         """
         Plot the expected ratio
@@ -454,15 +294,15 @@ class OnlineSequential:
         if ax is None:
             fig, ax = plt.subplots(figsize=(12, 6))
 
-        probs = self.probs if probs is None else probs
+        if results is None:
+            results = pd.concat(self.it_results)
 
-        d_kl = [p.divergence_kl() for p in probs]
-        kl_delta = np.abs(np.array(d_kl[1:]) - np.array(d_kl[:-1]))
-        x_vals = np.arange(1, len(kl_delta) + 1) if x_vals is None else x_vals
+        # Calculate change in KL from previous iteration pandas df
+        results['kl_delta'] = results['kl'].shift(1) - results['kl']
 
         label = "$\Delta \mathrm{KL}(\pi^{up}_i | \pi^{up}_{i-1})$"
         sns.lineplot(
-            x=x_vals, y=kl_delta, color="purple", ax=ax, label=label, marker="o"
+            results.dropna(), x=x_vals, y='kl_delta', color="purple", ax=ax, label=label, marker="o"
         )
 
         if kl_thresh is not None:
@@ -487,7 +327,7 @@ class OnlineSequential:
         kl_thresh=None,
         y1="e_r",
         y2="kl",
-        x_vals=None,
+        x_vals='data_idx',
         x_label="Iteration",
         ax=None,
     ):
@@ -505,8 +345,7 @@ class OnlineSequential:
         if y1 == y2:
             raise ValueError("y1 and y2 must be different")
 
-        e_r = [p.expected_ratio() for p in probs]
-        d_kl = [p.divergence_kl() for p in probs]
+        results = pd.concat(self.it_results)
 
         axs = [ax]
         for i, y in enumerate([y1, y2]):
@@ -515,15 +354,15 @@ class OnlineSequential:
                 axs.append(ax)
             if y == "e_r":
                 self.e_r_plot(
-                    probs, e_r_thresh=e_r_thresh, x_vals=x_vals, x_label=x_label, ax=ax
+                    results=results, e_r_thresh=e_r_thresh, x_vals=x_vals, x_label=x_label, ax=ax
                 )
             if y == "kl":
                 self.kl_plot(
-                    probs, kl_thresh=kl_thresh, x_vals=x_vals, x_label=x_label, ax=ax
+                    results=results, kl_thresh=kl_thresh, x_vals=x_vals, x_label=x_label, ax=ax
                 )
             if y == "kl_delta":
                 self.kl_delta_plot(
-                    probs, kl_thresh=kl_thresh, x_vals=x_vals, x_label=x_label, ax=ax
+                    results=results, kl_thresh=kl_thresh, x_vals=x_vals, x_label=x_label, ax=ax
                 )
 
         axs[0].legend(loc="upper left")
@@ -531,13 +370,206 @@ class OnlineSequential:
 
         return axs
 
-    def fixed_iterative_solve(
+    def make_summary_plots(self, data_idx: int = -1, save_dir=None, save_name=None):
+        """
+        Makes summary plots for the given iteration of the problem,
+        returns True or False if the user wants to continue or not.
+        """
+        self.probs[data_idx].best.param_density_plots()
+        self.probs[data_idx].param_density_plots()
+        plt.show()
+        response = input('Press enter to continue, or q to quit.')
+        if response == 'q':
+            logger.info(f"User break at iteration {it}")
+            return False
+
+        return True
+
+    def solve_till_thresh(
         self,
-        max_t=1,
-        num_samples=100,
-        time_step=1,
+        data_idx,
+        exp_thresh=0.1,
+        start_sample_size=1000,
+        max_sample_size=None,
+        samples_inc=None,
+        sampling_args={},
+        min_eff_sample_size=1.0,
+        reset=False,
+        solver_args=dict(
+            search_list=None,
+            best_method="closest",
+            fail_on_partial=True,
+            pi_in=None,
+            all_data=True,
+            pca_range=[2],
+            mask_range=None,
+            split_range=[1],
+            max_nc=2,
+            data_chunk_size=None,
+            max_num_combs=10,
+        ),
+    ):
+        """
+        Solves a problem with a given set of arguments, increasing the number
+        of samples used until the E(r) threshold is met for any solve.
+        """
+        data_idx = data_idx if data_idx != -1 else len(self.model.data) - 1
+        max_sample_size = start_sample_size if max_sample_size is None \
+            else max_sample_size
+        samples_inc = max(1, int((max_sample_size - start_sample_size)/10)) \
+            if samples_inc is None else samples_inc
+        logger.debug(f'Max sample size: {max_sample_size}, samples_inc: {samples_inc}')
+
+        def _get_samples(init, ss):
+            """
+            Helper function to get samples from either a distribution or KDE.
+            or to draw new samples from the model if no distribution is given.
+            """
+            if init is None:
+                init, samples = self.model.get_initial_samples(
+                    num_samples=ss, **sampling_args
+                )
+            else:
+                if not isinstance(init, gaussian_kde):
+                    samples = init.rvs((ss, self.model.n_params))
+                else:
+                    samples = init.resample(ss).T
+
+            return init, samples
+
+        sample_size = start_sample_size
+
+        # * First see if there is information from a previous solve
+        weights = None
+        if data_idx > 0 and len(self.it_results) > 0 and not reset:
+            # * Use last pi_up from previous as pi_in
+            pi_in = self.probs[data_idx-1].best.dists["pi_up"]
+
+            # * Determine whether we keep samples from past iteration
+            weights = self.probs[data_idx-1].best.state['ratio'].values
+            eff_sample_ratio = len(np.where(weights > 1e-10)[0]) / len(
+               self.model.samples[data_idx-1])
+            logger.info(f"Effective sample ratio: {eff_sample_ratio}")
+            if eff_sample_ratio <= min_eff_sample_size:
+                # * Weights from last iteration are too refined
+                logger.info(f"Re-setting weights: {eff_sample_ratio} < " +
+                            f"{min_eff_sample_size}).")
+
+                logger.info(f"Re-sampling from pi_up_{data_idx-1}")
+                samples = self.probs[data_idx-1].best.sample_dist(start_sample_size, dist="pi_up")
+                weights = None
+            else:
+                sample_size = len(self.model.samples[data_idx-1])
+                if sample_size > max_sample_size:
+                    raise ValueError(
+                        f"Number of samples from previous iteration ({sample_size})" +
+                        f" exceeds max_sample_size ({max_sample_size})."
+                    )
+
+                logger.info(f"Using samples {sample_size} from previous" +
+                            f" iteration {data_idx-1}: {eff_sample_ratio} >=" +
+                            f"{min_eff_sample_size}).")
+                # ! Note: Passing None to forward_solve will use the samples from the previous iteration
+                samples = None
+        else:
+            # * IF reset set, or first iteration, start from initial
+            logger.info(f'Starting from initial Reset:{reset}, Data_Idx: ' +
+                        f'{data_idx}\nSampling Args: {sampling_args}\n' +
+                        f'Solver Args: {solver_args}')
+            pi_in, samples = self.model.get_initial_samples(
+                num_samples=start_sample_size, **sampling_args
+            )
+
+        # * Advance forward model for first set of samples.
+        logger.info(f"Advancing forward model for {sample_size} samples")
+        self.model.forward_solve(samples=samples, append=False, data_idx=data_idx)
+
+        solved = False
+        results = []
+        while not solved:
+            prob = OfflineSequentialSearch(
+                self.model.samples[data_idx],
+                self.model.data[data_idx],
+                self.model.measurement_noise,
+                pi_in=pi_in,
+            )
+            logger.debug(
+                f"Solving {'WEIGHTED' if weights is not None else 'UN-WEIGHTED'}" +
+                f" {sample_size} samples. Args: {solver_args}"
+            )
+            solver_args['weights'] = weights
+            solver_args['search_exp_thresh'] = exp_thresh
+            try:
+                prob.solve(**solver_args)
+            except RuntimeError as r:
+                if 'No solution found within' in str(r) or 'All combinations tried failed.' in str(r):
+                    logger.debug(f"Failed with {sample_size} samples:\n{prob.search_results}")
+                else:
+                    raise r
+            else:
+                solved = True
+
+            # TODO: Choose which of these to use
+            weighted_flag = False if weights is None or len(weights) == 0 else True
+            try:
+                results.append(prob.search_results if prob.search_results
+                            is not None else pd.concat([p.result for p in prob.probs]))
+            except ValueError as v:
+                if 'All objects passed were None' in str(v):
+                    solved = False
+                    results.append(
+                        pd.DataFrame(
+                            np.repeat(
+                                np.array([[sample_size,
+                                           weighted_flag]]),
+                                len(prob.probs), axis=0
+                            ), columns=['num_samples', 'weighted']
+                        )
+                    )
+                else:
+                    raise v
+            else:
+                results[-1]['num_samples'] = sample_size
+                results[-1]['weighted'] = weighted_flag
+
+            if not solved:
+                if weights is not None and len(weights) > 0:
+                    logger.info("Failed using weighted samples from previous " +
+                                "iteration -> Re-starting with a fresh set of " +
+                                "unweighted samples from the previous distribution")
+                    pi_in, samples = _get_samples(
+                        self.probs[data_idx-1].best.dists['pi_up'], start_sample_size
+                    )
+                    weights = None
+                elif sample_size >= max_sample_size:
+                    logger.debug(f"Reached max sample size of {max_sample_size}")
+                    break
+                else:
+                    logger.debug(f"Drawing {samples_inc} more samples.")
+                    _, samples = _get_samples(pi_in, samples_inc)
+                    sample_size += samples_inc
+                    logger.debug(f"Solving forward model for {samples_inc} more samples")
+                    self.model.forward_solve(samples=samples, append=True, data_idx=data_idx)
+        
+        results = pd.concat(results)
+        logger.info(
+            f"Solved {'FAILED' if not solved else 'SUCCEEDED'} (s = {sample_size}). Results:\n{results}"
+        )
+
+        return solved, results, prob
+
+    def solve(
+        self,
+        num_its=1,
+        max_t=None,
+        num_samples=1000,
+        max_sample_size=None,
+        samples_inc=None,
+        time_step=None,
         exp_thresh=0.1,
         kl_thresh=3.0,
+        min_eff_sample_size=0.5,
+        num_tries_per_it=2,
         sampling_args={
             "scale": 0.5,
         },
@@ -546,315 +578,136 @@ class OnlineSequential:
             best_method="closest",
             fail_on_partial=True,
             pi_in=None,
+            weights=None,
             search_exp_thresh=1e10,
             all_data=True,
-            pca_range=None,
+            pca_range=[2],
             mask_range=None,
-            split_range=None,
-            max_nc=5,
+            split_range=[1],
+            max_nc=None,
             data_chunk_size=None,
-            max_num_combs=20,
+            max_num_combs=10,
         ),
+        reset_model=False,
+        reset_samples=False,
         make_plots=True,
-    ):
-        """
-        Online solve
-
-        If problem has not been initialized (no self.probs[] array), then the problem
-        is initialized with a uniform distribution over the parameter space around the
-        true value, with a scale of `diff` controlling the size of the uniform distribution
-        around the true value we search for, and hence the problem difficulty.
-        Solve inverse problem for `num_its` consuming `time_step` data at each iteration.
-        At each iteration, a set of possible sovle parameters will be searched for, using
-        varying number of PCA components, data points, and splits. The best solution will
-        be determined by the `best_method` argument.
-
-        """
-        max_its = int(max_t / time_step) + 1
-        if max_its < 1:
-            raise ValueError(
-                f"max_t must be greater than time_step: {max_t} > {time_step}"
-            )
-
-        if len(self.probs) == 0:
-            logger.info(f"Initializing {num_samples} samples:\n{sampling_args}")
-            pi_in, samples = self.model.get_initial_samples(
-                num_samples=num_samples, **sampling_args
-            )
-            it = 1
-        else:
-            pi_in = self.probs[-1].dists["pi_up"]
-            samples = self.probs[-1].sample_dist(num_samples=num_samples)
-            it = len(self.probs)
-            logger.info(f"Continuing at iteration {it} and timestep {self.t0}")
-
-        best_flag = np.empty((num_samples, 1), dtype=bool)
-
-        if not (isinstance(make_plots, bool) or isinstance(make_plots, list)):
-            raise ValueError(
-                f"make_plots must be bool or list of iterations to plot: {make_plots}"
-            )
-        make_plots = range(max_its) if isinstance(make_plots, bool) and make_plots else make_plots
-        logger.debug('make_plots: {make_plots}')
-
-        while it < max_its:
-            logger.debug(f"Iteration {it} from {(it-1)*time_step} to {it*time_step}")
-            if it > len(self.model.data):
-                logger.debug(
-                    f"Getting {int(time_step/self.model.sample_ts)}"
-                    + f" data for iteration {it}"
-                )
-                self.model.get_data(tf=it*time_step)
-
-            self.model.forward_solve(samples=samples, data_idx=it-1)
-
-            prob = OfflineSequentialSearch(
-                self.model.samples[it-1],
-                self.model.data[it-1],
-                self.model.measurement_noise,
-                pi_in=pi_in,
-            )
-            try:
-                prob.solve(
-                    **solver_args
-                )
-            except RuntimeError as r:
-                if 'No solution found within' in str(r):
-                    logger.error(f'No solution on iteration {it} within {exp_thresh}')
-                    shift = True
-                else:
-                    logger.error(f'Unknown error on iteration {it}: {r}')
-                    raise r
-            if prob.best is None:
-                shift = False
-                reason = ""
-                if prob.search_results is not None:
-                    avg_kl = np.mean(prob.search_results["kl"])
-                    all_res = pd.concat([p.result for p in prob.probs])
-                    logger.info(f"No solution found within exp_thresh:\n{all_res}")
-                    if avg_kl > kl_thresh:
-                        shift = True
-                    reason = f"Avg. KL Divergence > threshold: {avg_kl}"
-                else:
-                    shift = True
-                    reason = "No solution found amongst search options:\n{search_combs}"
-
-                if shift:
-                    logger.info(f"Suspected shift in params at {it}.\n{reason}.")
-                    pi_in, samples = self.model.get_initial_samples(
-                        num_samples=num_samples, **sampling_args
-                    )
-                    shift = False
-                else:
-                    logger.info(
-                        f"KL Divergence within threshold: {avg_kl}."
-                        + "No shift but bad E(r). Skipping interval."
-                    )
-                    self.probs.append(prob)
-                    it += 1
-            else:
-                logger.info(f"Best solution found:{prob.best.result}")
-                self.probs.append(prob)
-                if make_plots and it in make_plots:
-                    prob.best.param_density_plots()
-                    prob.param_density_plots()
-                    plt.show()
-                    response = input('Press enter to continue, or q to quit.')
-                    if response == 'q':
-                        logger.info(f"User break at iteration {it}")
-                        break
-                best_flag[:] = False
-                best_flag[self.probs[-1].best.mud_arg] = True
-                self.model.samples[-1]["best_flag"] = best_flag
-                try:
-                    samples = self.probs[-1].best.sample_dist(num_samples=num_samples)
-                except KDEError as e:
-                    msg = f"Unable to draw samples from update distribution: {e}"
-                    msg += "\nRe-run using more samples and/or append=True."
-                    logger.error(msg)
-                    raise RuntimeError(msg)
-
-                pi_in = self.probs[-1].best.dists["pi_up"]
-                it += 1
-
-    def adaptive_online_iterative(
-        self,
-        num_steps=1,
-        time_step=None,
-        diff=0.5,
-        num_samples=100,
-        nc=1,
-        resample_thresh=0.2,
-        shift_thresh=0.9,
-        min_eff_sample_size=0.5,
-        weights=None,
         seed=None,
     ):
         """
-        Online solve
+        Online Iterative Solve
 
-        If problem has not been initialized (no self.probs[] array), then the problem
-        is initialized with a uniform distribution over the parameter space around the
-        true value, with a scale of `diff` controlling the size of the uniform distribution
-        around the true value we search for, and hence the problem difficulty.
-        Solve inverse problem for `num_its` consuming `time_step` data at each iteration.
-        At each iteration, a set of possible sovle parameters will be searched for, using
-        varying number of PCA components, data points, and splits. The best solution will
-        be determined by the `best_method` argument.
-
+        TODO: Document
         """
-        logger.debug(f"Running online iterative solve over time window {time_windows}")
-
         if seed is not None:
             logger.info(f"Setting seed to {seed}")
             set_seed(seed)
 
+        t0 = 0
+        if len(self.model.data) == 0:
+            logger.info("No previous data -> Starting from initial")
+            start_idx = 0
+            self.probs= []
+            self.it_results = []
+        elif reset_model:
+            logger.info("Resetting model -> Starting from initial")
+            start_idx = 0
+            self.model.reset(warn=False)
+            self.probs = []
+            self.it_results = []
+        else:
+            if reset_samples or len(self.probs) == 0:
+                logger.info("Resetting samples -> Starting from beginning using same data.")
+                self.model.samples = []
+                self.model.samples_xf = []
+                start_idx = 0
+                self.probs = []
+                self.it_results = []
+            else:
+                start_idx = len(self.probs)
+                logger.info(f"Starting from iteration {start_idx}")
+                t0 = self.model.data[start_idx-1]['ts'].max()
+
         time_step = time_step if time_step is not None else self.time_step
-        if self.time_step < self.model.sample_ts:
+        if time_step < self.model.sample_ts:
             raise ValueError(
                 f"time_step too small (> sampe_ts): {time_step} > {self.model.sample_ts}"
             )
-        if weights is not None and len(weights) != num_samples:
-            raise ValueError(f"weights must be None or of length {num_samples}")
-
-        t0 = None
-        samples = None
-        pi_in = None
-        if self.model.n_intervals == 0:
-            logger.debug(
-                f"Drawing {num_samples} samples from {self.model.def_init[0]} with args {self.model.def_init[1]}"
+        num_its = num_its if max_t is None else int(max_t - t0/ time_step) + 1
+        if num_its < 1:
+            raise ValueError(
+                f"Num iterations too small: {num_its} < 1"
             )
-            pi_in, samples = self.model.get_initial_samples(num_samples=num_samples)
-            t0 = 0.0
+        if not (isinstance(make_plots, bool) or isinstance(make_plots, list)):
+            raise ValueError(
+                f"make_plots must be bool or list of iterations to plot: {make_plots}"
+            )
+        make_plots = range(num_its) if isinstance(make_plots, bool) and make_plots else make_plots
+        logger.debug(f'make_plots: {make_plots}')
 
-        weights = [] if weights is None else weights
-        best_flag = np.empty((num_samples, 1), dtype=bool)
-        sample_groups = (
-            []
-        )  # List of lists of data chunks groups used by common set of samples
-        sample_group = (
-            []
-        )  # List for current iteration of data chunks used by common set of samples
-        skip_intervals = []  # List of intervals where no solution was found
-        for i, t in enumerate(range(num_steps)):
-            sample_group += [i]
-            tf = t0 + (i + 1) * time_step
+        reset = False
+        best_flag = pd.DataFrame(np.empty((num_samples, 1), dtype=bool))
+        logger.info(f"Starting online solve with {num_samples} samples")
+        data_idx = start_idx
+        num_tries_per_it = min(2, num_tries_per_it)
+        tf = t0 + time_step
+        for i in range(num_its):
+            data_idx = start_idx + i
             logger.debug(f"Getting measurements over time window {t0} to {tf}")
-            self.model.get_data(t0=t0, tf=tf)
-            measurements = get_df(
-                self.model.data[-1].dropna(), "q_lam_obs", self.model.n_sensors
-            )
+            try:
+                self.model.get_data(tf=tf)
+            except Exception as e:
+                if 'must be greater than' in str(e):
+                    pass
+                else:
+                    logger.error(f"Error getting data for iteration {data_idx}: {e}")
+                    raise e
 
             num_tries = 0
-            solution_found = False
-            prev_pi_in = pi_in
-            while not solution_found and num_tries < 2:
-                # Solve -> Saves states in state dictionary
-                self.model.forward_solve(samples=samples)
-
-                prob = OfflineSequential(
-                    self.model.samples[-1],
-                    measurements,
-                    self.measurement_noise,
-                    pi_in=pi_in,
+            solved = False
+            logger.debug(f'Starting solves for iteration {data_idx}')
+            while not solved and num_tries < num_tries_per_it:
+                solved, results, prob = self.solve_till_thresh(
+                    data_idx,
+                    exp_thresh=exp_thresh,
+                    start_sample_size=num_samples,
+                    max_sample_size=max_sample_size,
+                    samples_inc=samples_inc,
+                    sampling_args=sampling_args,
+                    min_eff_sample_size=min_eff_sample_size,
+                    reset=reset,
+                    solver_args=solver_args,
                 )
-                prob.set_weights(weights)
+                self.it_results.append(results)
+                self.it_results[-1]['data_idx'] = data_idx
 
-                try:
-                    prob.solve(pca_components=list(range(nc)))
-                except ZeroDivisionError as z:
-                    # Zero division means predictabiltiy assumption violated
-                    # -> Param shift may have occured as predicted prob
-                    #    of a sample was set to zero where observed data was non-zero
-                    e_r_delta = -1.0
-                    logger.error(
-                        f"Failed: Ill-posed problem: {z}. Suspected param shift."
-                    )
-                else:
-                    e_r = prob.result["e_r"].values[0]
-                    e_r_delta = np.abs(e_r - 1.0)
-                    logger.info(
-                        f"Succesfully solved problem - e_r_delta = {e_r_delta}, kl = {prob.divergence_kl()}"
-                    )
+                if make_plots and i in make_plots:
+                    self.make_summary_plots(data_idx=data_idx)
 
-                # If failed to solve problem because we have refined our weights to much
-                # On the current set of samples, then resample from previous iterations updated distribution
-                # To start with a fresh set of samples and no weights
-                # This occurs when
-                #   1. Weights vector is too refined, zero-ing out too many samples so we don't have enough variability
-                #       in our samples to solve the problem usinG KDEs -> error through by prob.solve() which we catch by setting e_r_delta = 1.0
-                #   2. The e_r_delta we get is above our resampling threshold, but not greater than the shift threshold where we may
-                #       think that the true params have shifted and a violation of the predictabiltiy assumption is occuring instead
-                #       of jus a resolution issue due to weighting of the curent samples.
-                # over-ref
-                if (e_r_delta > resample_thresh) and (e_r_delta < shift_thresh):
-                    if i == 0:
-                        # Won't be able to sample from previous if this is the first iteration
-                        raise ValueError(
-                            "Problem is ill-posed and cannot be solved from the first iteration."
-                        )
-                    logger.info(
-                        f"|E(r) - 1| = {e_r_delta} : < 0 or > {resample_thresh} -> Resampling from previous pi_up and retrying."
-                    )
-                    samples = self.probs[-1].sample_dist(num_samples, dist="pi_up")
-                    pi_in = self.probs[-1].dists["pi_up"]
-                    logger.info(f"Zeroing out weights and retrying solve.")
-                    weights = []
-                    num_tries += 1
-                elif e_r_delta > shift_thresh or e_r_delta < 0.0:
-                    logger.info(f"|E(r) - 1| = {e_r_delta} > {shift_thresh} --> Shift.")
-                    logger.info(
-                        f"Drawing {num_samples} samples from uniform +- {diff} around true value"
-                    )
-                    pi_in, samples = self.get_uniform_initial_samples(
-                        num_samples=num_samples, scale=diff
-                    )
-                    weights = []
-                    num_tries += 1
-                else:
-                    logger.info(
-                        f"|E(r) - 1| = {e_r_delta} < {resample_thresh} - Keeping solution."
-                    )
-                    logger.info(f"{prob.result}")
+                if solved:
                     self.probs.append(prob)
-
-                    best_flag = np.empty((num_samples, 1), dtype=bool)
+                    best_flag = pd.DataFrame(
+                        np.empty((len(self.model.samples[data_idx]), 1), dtype=bool),
+                        columns=["best_flag"],
+                    )
                     best_flag[:] = False
-                    best_flag[prob.mud_arg] = True
-                    self.samples[-1]["best_flag"] = best_flag
+                    best_flag.iloc[prob.best.mud_arg] = True
+                    self.model.samples[data_idx]["best_flag"] = best_flag['best_flag']
+                    reset = False
+                else:
+                    if kl := np.mean(results.dropna()['kl']) > kl_thresh:
+                        # ! Change point detection -> E(r) bad with large KL divergence
+                        logger.info(f"Avg KL value of {kl} > {kl_thresh} -> shifting time window")
+                        reset = True
+                    num_tries += 1
 
-                    solution_found = True
+                    if num_tries >= num_tries_per_it:
+                        logger.info(f"Reached max number of tries ({num_tries_per_it}) Skipping Iteration")
+                        # TODO: Fail on first iteration? Or continue simulating until a good iteration found?
+                        # if i == 0:
+                        #     RuntimeError("No solution found for first iteration")
+                        self.probs.append(prob)
+                        reset = True
 
-                    # Determine if new set of weights is too refined -> Calculate effective sample size
-                    weights.append(prob.state["ratio"].values)
-                    net_weights = np.prod(np.array(weights).T, axis=1)
-                    eff_num_samples = len(np.where(net_weights > 1e-10)[0])
-                    logger.info(f"Effective sample size: {eff_num_samples}")
-                    if eff_num_samples / num_samples < min_eff_sample_size:
-                        logger.info(
-                            f"Getting new set of samples ({eff_num_samples} < {min_eff_sample_size})."
-                        )
-                        samples = prob.sample_dist(num_samples, dist="pi_up")
-                        pi_in = prob.dists["pi_up"]
-                        weights = []
-                        sample_groups.append(sample_group)
-                        sample_group = []
-                    else:
-                        if num_tries > 0:
-                            # Got here after a retry -> Clear sample groups
-                            sample_groups.append(sample_group)
-                            sample_group = []
-                        logger.info(f"Keeping samples.")
-                        samples = None
-
-            if not solution_found:
-                # TODO: Here could try increasing sample size
-                logger.info("No good solution found. Skipping to next time window.")
-                pi_in = prev_pi_in
-                samples = None
-                skip_intervals.append(i)
-
-            logger.info(f"Sample groups {sample_group}")
-            t0 = t
-
-        return sample_groups, probs
+            # Advanced Time Steps
+            t0 = tf
+            tf += time_step

@@ -307,7 +307,7 @@ def get_search_combinations(
         mask_range = (
             [n_data]
             if all_data
-            else range(data_chunk_size, n_data + 1, data_chunk_size)
+            else range(data_chunk_size, n_data, data_chunk_size)
         )
 
     # * 3. # Splits : 1 -> (# data/# data_chunk_size). Splits of data_chunk_size.
@@ -317,7 +317,7 @@ def get_search_combinations(
     search_list = [
         {
             "exp_thresh": exp_thresh,
-            "pca_components": [list(range(i + 1))],
+            "pca_components": i,
             "pca_mask": range(j),
             "pca_splits": k,
         }

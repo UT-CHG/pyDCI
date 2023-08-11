@@ -46,7 +46,7 @@ from alive_progress import alive_bar
 from numpy.linalg import LinAlgError
 from numpy.typing import ArrayLike
 from rich.table import Table
-from scipy.stats import rv_continuous  # type: ignore
+from scipy.stats import rv_continuous, entropy  # type: ignore
 from scipy.stats.distributions import norm
 from sklearn.decomposition import PCA  # type: ignore
 from sklearn.preprocessing import StandardScaler  # type: ignore
@@ -121,7 +121,8 @@ class OfflineSequential(PCAMUDProblem):
             std_dev,
             pi_in=pi_in,
         )
-        self.pca_states = None
+        self.states = None
+        self.it_results = pd.DataFrame()
 
     def save_state(self, vals):
         """
@@ -134,10 +135,10 @@ class OfflineSequential(PCAMUDProblem):
         state = self.state[cols].copy()
         for key in keys:
             state[key] = vals[key]
-        if self.pca_states is None:
-            self.pca_states = state
+        if self.states is None:
+            self.states = state
         else:
-            self.pca_states = pd.concat([self.pca_states, state], axis=0)
+            self.states = pd.concat([self.states, state], axis=0)
 
     def solve(
         self,
@@ -161,6 +162,7 @@ class OfflineSequential(PCAMUDProblem):
         """
         it_results = []
         weights = [] if weights is None else weights
+        weights = [weights] if isinstance(weights, np.ndarray) else weights
         failed = False
         if exp_thresh <= 0:
             msg = f"Expected ratio thresh must be a float > 0: {exp_thresh}"
@@ -265,15 +267,78 @@ class OfflineSequential(PCAMUDProblem):
         if fail_on_partial and len(self.it_results) < len(iterations):
             raise RuntimeError("Failed to solve problem through all iterations")
 
+    def expected_ratio(self, iteration: int = -1) -> float:
+        """Expectation Value of R
+
+        Returns the expectation value of the R, the ratio of the observed to
+        the predicted density values.
+
+        If the predictability assumption for the data-consistent framework is
+        satisfied, then this values should be close to 1.0.
+
+        Returns
+        -------
+        expected_ratio : float
+            Value of the E(r). Should be close to 1.0.
+        """
+        df = self.get_iteration_state(iteration=iteration)
+        return np.average(df["ratio"], weights=df["weight"])
+
+    def divergence_kl(self, iteration: int = -1):
+        """KL-Divergence Between observed and predicted.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        kl: float
+            Value of the kl divergence.
+        """
+        df = self.get_iteration_state(iteration=iteration)
+        return entropy(df["pi_obs"], df["pi_pr"])
+
+    def get_mud_point(self, state_df: pd.DataFrame = None, iteration: int = -1) -> tuple:
+        """
+        Get MUD Point from DataFrame.
+
+        Get MUD point from DataFrame. If DataFrame is not passed in, use the
+        `result` attribute of the class.
+
+        Parameters
+        ----------
+        iteration : int, optional
+            The iteration to get the MUD point from. If not provided, the method
+            will use the last iteration.
+        state_df : DataFrame, optional
+            The state DataFrame. If not provided, the method will use the `state`
+            attribute of the class.
+
+        Returns
+        -------
+        tuple
+            A tuple containing the index of the maximum "pi_up" value in the
+            DataFrame and the MUD point calculated using the `get_df` method
+            with the "lam" column and `n_params` attribute of the class.
+
+        """
+        state_df = state_df if state_df is not None \
+            else self.get_iteration_state(iteration=iteration)
+
+        m = np.argmax(state_df["pi_up"])
+        mud_point = get_df(state_df.iloc[[m]], "lam", size=self.n_params)
+
+        return m, mud_point
+
     def get_iteration_state(self, iteration=-1):
         """
         Retrieve the state of the system at the specified iteration
         """
-        if self.pca_states is None:
+        if self.states is None:
             df = self.state
         else:
-            iterations = self.pca_states["iteration"].unique()
-            df = self.pca_states[self.pca_states["iteration"] == iterations[iteration]]
+            iterations = self.states["iteration"].unique()
+            df = self.states[self.states["iteration"] == iterations[iteration]]
 
         return df
 
@@ -412,7 +477,7 @@ class OfflineSequential(PCAMUDProblem):
         Plot PCA iterations.
 
         Plots the initial distribution, the iterative updates, and the final solution
-        as stored in the self.it_results and self.pca_states attributes of the
+        as stored in the self.it_results and self.states attributes of the
         PCAMUDselflem object, which are updated during a solve() call.
         The iterative updates correspond to using a re-weighted sequential data-consistent
         update, also known as "offline" sequential estimation, since iterations
@@ -596,7 +661,7 @@ class OfflineSequential(PCAMUDProblem):
         """
         result = self.result if result is None else result
         title = super()._parse_title(result=result, lam_true=lam_true)
-        num_splits = len(self.pca_states["iteration"].unique())
+        num_splits = len(self.states["iteration"].unique())
         if nc:
             title = f"# Splits = {num_splits}: " + title
 
