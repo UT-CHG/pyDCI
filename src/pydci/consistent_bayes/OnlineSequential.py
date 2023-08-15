@@ -34,60 +34,6 @@ from pydci.utils import (
     set_shape,
 )
 
-from pydantic import BaseModel, Field, validator
-
-
-class OnlineSequentialParams(BaseModel):
-    num_samples: int = Field(100, gt=10)
-
-    # ! Adaptive sampling on iterartions
-    max_sample_size: Optional[int] = None
-    samples_inc: Optional[int] = None
-
-    # ! Shift detection on iterations
-    exp_thresh: float = Field(0.5, gt=0.0)
-    kl_thresh: float = Field(4.5, gt=0.0)
-
-    # ! Adaptive time stepping
-    min_eff_sample_size: float = Field(1.0, gt=0.0)
-
-    @validator("num_samples")
-    def check_num_samples(cls, value):
-        if value < 50:
-            print("Warning: Using < 50 samples is not recommended")
-        return value
-
-    @validator("max_sample_size", pre=True, always=True)
-    def check_max_sample_size(cls, value, values):
-        num_samples = values.get('num_samples')
-        if value is None:
-            return num_samples
-        if value > 100000:
-            print("Warning: max_sample_size > 100k")
-        return value
-
-    @validator("samples_inc", pre=True, always=True)
-    def check_samples_inc(cls, value, values):
-        num_samples = values.get('num_samples')
-        max_sample_size = values.get('max_sample_size') or num_samples
-        if value is None:
-            return max(1, round((max_sample_size - num_samples) / 10))
-        if value >= max_sample_size - num_samples:
-            raise ValueError("samples_inc must be less than max_sample_size - num_samples")
-        return value
-
-    @validator("kl_thresh")
-    def check_kl_thresh(cls, value):
-        if value < 3.0:
-            print("Warning: kl_thresh is less than 3.0")
-        return value
-
-    @validator("min_eff_sample_size")
-    def check_min_eff_sample_size(cls, value):
-        if value >= 1.0:
-            print("Adaptive sampling is off as min_eff_sample_size is greater than or equal to 1.0")
-        return value
-
 
 class OnlineSequential:
     """
@@ -109,12 +55,10 @@ class OnlineSequential:
         model,
         time_step=1,
         model_file: str = None,
-        params: OnlineSequentialParams = None,
     ):
         self.model = model
         self.time_step = time_step
         self.model_file = model_file
-        self.params = params if params else OnlineSequentialParams()
 
         if self.model_file is not None:
             # Initialize model (which is a class not an instance in this case)
