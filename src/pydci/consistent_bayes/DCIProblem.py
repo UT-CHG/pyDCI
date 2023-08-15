@@ -29,6 +29,8 @@ import itertools
 import pdb
 import random
 from typing import Callable, List, Optional, Union
+from rich.console import Console
+from rich.table import Table
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -50,6 +52,8 @@ from pydci.utils import (
     gkde,
     put_df,
     set_shape,
+    print_rich_table,
+    fmt_bytes,
 )
 
 sns.color_palette("bright")
@@ -110,6 +114,8 @@ class DCIProblem(object):
     doi: 10.1137/16M1087229.
     """
 
+    _print_opts = {'title': 'DCI Problem'}
+
     def __init__(
         self,
         samples,
@@ -140,15 +146,60 @@ class DCIProblem(object):
         """
         return self.lam.shape[0]
 
-    def init_prob(self, samples, pi_obs, pi_in=None, pi_pr=None):
-        """
-        Initialize problem
+    def __str__(self) -> str:
 
-        Initialize problem by setting the lambda samples, the values of the
+        info_df = self.result.copy()
+        info_df['mem_usage'] = fmt_bytes(self.state.memory_usage(deep=True).sum() / 1024)
+        info_df['num_samples'] = self.n_samples
+        info_df['num_params'] = self.n_params
+        info_df['num_states'] = self.n_states
+        return print_rich_table(
+            info_df,
+            columns=['num_samples', 'num_params', 'num_states',
+                     'mem_usage', 'solved', 'e_r', 'kl', 'error'],
+            vertical=True,
+            **self._print_opts,
+        )
+
+    def init_prob(
+        self,
+        samples: Union[pd.DataFrame, List[np.ndarray]],
+        pi_obs: Union[gaussian_kde, rv_continuous],
+        pi_in: Optional[Union[gaussian_kde, rv_continuous]] = None,
+        pi_pr: Optional[Union[gaussian_kde, rv_continuous]] = None,
+        weights: Optional[np.ndarray] = None
+    ) -> None:
+        """
+        Initialize the problem.
+
+        Initialize the problem by setting the lambda samples, the values of the
         samples pushed through the forward map, and the observe distribution
-        on the data. Can optionally as well set the initial and predicteed
-        distributions explicitly, and pass in weights to incorporate prior
-        beliefs on the `lam` sample sets.
+        on the data. Optionally, set the initial and predicted distributions
+        explicitly, and pass in weights to incorporate prior beliefs on the `lam`
+        sample sets.
+
+        Parameters
+        ----------
+        samples : Union[pd.DataFrame, List[np.ndarray]]
+            Lambda samples. If a DataFrame, the columns with names starting with "l"
+            are considered parameters, and the remaining columns are considered states.
+            Otherwise, the samples are given as a list of two arrays, the first
+            containing the lambda samples and the second the q_lambda samples.
+        pi_obs : Union[gaussian_kde, rv_continuous]
+            Observe distribution on the data.
+        pi_in : Optional[Union[gaussian_kde, rv_continuous]], default=None
+            Initial distribution. If None, will be calculated from initial samples.
+        pi_pr : Optional[Union[gaussian_kde, rv_continuous]], default=None
+            Predicted distribution. If None, will be calculated from inintial samples.
+        weights : Optional[np.ndarray], default=None
+            Weights to incorporate prior beliefs on the `lam` sample sets. If specified,
+            will be used as weights fro the KDEs in pi_in, pi_pr, and the computation
+            of the expected ratio.
+
+        Returns
+        -------
+        None
+            The function modifies the internal state of the object and doesn't return anything.
         """
         if isinstance(samples, pd.DataFrame):
             cols = samples.columns
@@ -163,7 +214,6 @@ class DCIProblem(object):
             np.zeros((self.n_samples, 6)),
             columns=["weight", "pi_in", "pi_pr", "pi_obs", "ratio", "pi_up"],
         )
-        self.state["weight"] = 1.0
         self.state = put_df(self.state, "q_lam", self.q_lam, size=self.n_states)
         self.state = put_df(self.state, "lam", self.lam, size=self.n_params)
         self.dists = {
@@ -173,18 +223,40 @@ class DCIProblem(object):
             "pi_up": None,
             "pi_pf": None,
         }
-        self.result = None
+        self.result = pd.DataFrame(
+            [[np.nan, np.nan, np.nan, np.nan, False, None]],
+            columns=["e_r", "kl", "k_eff", "k_eff_up", "solved", "error"]
+        )
+        self.set_weights(weights)
+        self.states = []
+        self.results = []
 
-    def pi_in(self, values=None):
+    def pi_in(self, values: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Evaluate the initial distribution.
 
-        Init distribion is either set explicitly in by a call to `init_prob`
-        or calculated from a gaussain kernel density estimate (using scipy) on
+        The initial distribution is either set explicitly by a call to `init_prob`
+        or calculated from a Gaussian kernel density estimate (using scipy) on
         the initial samples, weighted by the sample weights.
+
+        Parameters
+        ----------
+        values : Optional[np.ndarray], default=None
+            Values at which to evaluate the distribution. If None, uses `self.lam`.
+
+        Returns
+        -------
+        np.ndarray
+            Evaluated initial distribution.
+
+        Raises
+        ------
+        KDEError
+            If the kernel density estimation fails on initial samples. note
+            if initial weights specified, this can be because the weights are reducing
+            the sample size significantly..
         """
         if self.dists["pi_in"] is None:
-            logger.debug("Calculating pi_in by computing KDE on lam")
             try:
                 self.dists["pi_in"] = gkde(
                     self.lam.T,
@@ -194,23 +266,39 @@ class DCIProblem(object):
             except KDEError as k:
                 k.msg = "KDE failed on initial samples"
                 raise k
+
         values = self.lam if values is None else values
         if isinstance(self.dists["pi_in"], gaussian_kde):
             return self.dists["pi_in"].pdf(values.T).T
         else:
             return self.dists["pi_in"].pdf(values)
 
-    def pi_pr(self, values=None):
+    def pi_pr(self, values: Optional[np.ndarray] = None) -> Union[np.ndarray, float]:
         """
         Evaluate the predicted distribution.
 
-        Predicted distribion is either set explicitly in the call to
-        `init_prob` or calculated from a gaussain kernel density estimate
-        (using scipy) on the push forward of the initial samples, q_lam,
-        weighted by the sample weights.
+        The predicted distribution is either set explicitly in the call to `init_prob`
+        or calculated from a Gaussian kernel density estimate (using scipy) on
+        the push forward of the initial samples, q_lam, weighted by the sample weights.
+
+        Parameters
+        ----------
+        values : Optional[np.ndarray], default=None
+            Values at which to evaluate the distribution. If None, uses `self.q_lam`.
+
+        Returns
+        -------
+        Union[np.ndarray, float]
+            Evaluated predicted distribution.
+
+        Raises
+        ------
+        KDEError
+            If the kernel density estimation fails on predicted samples. note
+            if initial weights specified, this can be because the weights are reducing
+            the sample size significantly..
         """
         if self.dists["pi_pr"] is None:
-            logger.debug("Calculating pi_pr by computing KDE on q_lam")
             try:
                 self.dists["pi_pr"] = gkde(
                     self.q_lam.T,
@@ -220,17 +308,28 @@ class DCIProblem(object):
             except KDEError as k:
                 k.msg = "KDE failed on observations"
                 raise k
+
         values = self.q_lam if values is None else values
         if isinstance(self.dists["pi_pr"], gaussian_kde):
             return self.dists["pi_pr"].pdf(values.T).T.ravel()
         else:
             return self.dists["pi_pr"].pdf(values).prod(axis=1)
 
-    def pi_obs(self, values=None):
+    def pi_obs(self, values: Optional[np.ndarray] = None) -> Union[np.ndarray, float]:
         """
         Evaluate the observed distribution.
 
-        Observed distribion is set explicitly in the call to `init_prob`.
+        The observed distribution is set explicitly in the call to `init_prob`.
+
+        Parameters
+        ----------
+        values : Optional[np.ndarray], default=None
+            Values at which to evaluate the distribution. If None, uses `self.q_lam`.
+
+        Returns
+        -------
+        Union[np.ndarray, float]
+            Evaluated observed distribution.
         """
         values = self.q_lam if values is None else values
         if isinstance(self.dists["pi_obs"], gaussian_kde):
@@ -238,75 +337,116 @@ class DCIProblem(object):
         else:
             return self.dists["pi_obs"].pdf(values).prod(axis=1)
 
-    def pi_up(self, values=None):
+    def pi_up(self, values: Optional[np.ndarray] = None) -> np.ndarray:
         """
-        Evaluate Updated Distribution
+        Evaluate the updated distribution.
 
-        Computed using scipy's gaussian kernel density estimation on the
+        Computed using scipy's Gaussian kernel density estimation on the
         initial samples, but weighted by the ratio of the updated and predicted
         distributions (evaluated at each sample value). Note, if the initial
         samples were weighted, then the weights are applied as well.
+
+        Parameters
+        ----------
+        values : Optional[np.ndarray], default=None
+            Values at which to evaluate the distribution. If None, uses `self.lam`.
+
+        Returns
+        -------
+        np.ndarray
+            Evaluated updated distribution.
+
+        Raises
+        ------
+        KDEError
+            If the kernel density estimation fails on the updated samples. Note
+            if update ratio is very small for too many samples, this can fail
+            as the weights are reducing the sample size significantly.
         """
-        # Compute udpated density
         if self.dists["pi_up"] is None:
             try:
                 self.dists["pi_up"] = gkde(
                     self.lam.T,
-                    weights=self.state["ratio"] * self.state["weight"],
+                    weights=self.state["weighted_ratio"],
                     label="Updated Distribution",
                 )
             except KDEError as k:
                 k.msg = "KDE failed on updated samples"
                 raise k
-        values = np.array(values)
-        values = self.lam if values is None else values
-        return self.dists["pi_up"].pdf(np.array(values).T).T
 
-    def pi_pf(self, values=None):
+        values = self.lam if values is None else np.array(values)
+        return self.dists["pi_up"].pdf(values.T).T
+
+    def pi_pf(self, values: Optional[np.ndarray] = None) -> np.ndarray:
         """
-        Evaluate Updated Distribution
+        Evaluate the push-forward of the updated distribution.
 
-        Computed using scipy's gaussian kernel density estimation on the
+        Computed using scipy's Gaussian kernel density estimation on the
         initial samples, but weighted by the ratio of the updated and predicted
         distributions (evaluated at each sample value). Note, if the initial
         samples were weighted, then the weights are applied as well.
+
+        Parameters
+        ----------
+        values : Optional[np.ndarray], default=None
+            Values at which to evaluate the distribution. If None, uses `self.q_lam`.
+
+        Returns
+        -------
+        np.ndarray
+            Evaluated push-forward of the updated distribution.
+
+        Raises
+        ------
+        KDEError
+            If the kernel density estimation fails on the updated predicted samples.
+            Note if update ratio is very small for too many samples, this can fail
+            as the weights are reducing the sample size significantly.
         """
-        # Compute udpated density
         if self.dists["pi_pf"] is None:
             try:
                 self.dists["pi_pf"] = gkde(
                     self.q_lam.T,
-                    weights=self.state["ratio"] * self.state["weight"],
+                    weights=self.state["weighted_ratio"],
                     label="Push-Forward of Updated Distribution",
                 )
             except KDEError as k:
                 k.msg = "KDE failed on updated observations"
                 raise k
+
         values = self.q_lam if values is None else values
         return self.dists["pi_pf"].pdf(values.T).T
 
-    def sample_dist(self, num_samples=1, dist="pi_up"):
+    def sample_dist(self, num_samples: int = 1, dist: str = "pi_up") -> np.ndarray:
         """
-        Sample Stored Distribution
+        Sample Stored Distribution.
 
-        Samples from stored distribtuion. By default samples from updated
+        Samples from a stored distribution. By default samples from the updated
         distribution on parameter samples, but also can draw samples from any
-        stored distribtuion: pi_in, pi_pr, pi_obs, and pi_up.
+        stored distribution: pi_in, pi_pr, pi_obs, pi_up, and pi_pf.
 
         Parameters
         ----------
-        dist: optional, default='pi_up'
-            Distribution to samples from. By default sample from the update
-            distribution
-        num_samples: optional, default=1
-            Number of samples to draw from distribtuion
+        num_samples : int, optional, default=1
+            Number of samples to draw from the distribution.
+        dist : str, optional, default='pi_up'
+            Distribution to sample from. By default, samples from the update
+            distribution.
 
         Returns
         -------
-        samples: ArrayLike
-            Samples from the udpated distribution. Dimension of array is
-            (num_samples * num_params)
+        np.ndarray
+            Samples from the updated distribution. Dimension of the array is
+            (num_samples, num_params).
+
+        Raises
+        ------
+        ValueError
+            If the specified distribution is not recognized distribution.
         """
+        if dist not in self.dists:
+            raise ValueError(f"Unknown distribution: {dist}")
+
         if isinstance(self.dists[dist], gaussian_kde):
             return self.dists[dist].resample(size=num_samples).T
         else:
@@ -381,27 +521,33 @@ class DCIProblem(object):
             mean's that the ratio of the observed to the predicted distributions
             is undefined or infinite, indicating our predictions aren't able
             to predict our observations.
+        KDEError
+            If the KDE fails to fit the initial or predicted distributions from
+            the data specified.
         """
         self.state["pi_in"] = self.pi_in()
         self.state["pi_obs"] = self.pi_obs()
-        pi_pr = self.pi_pr()
-        self.state["pi_pr"] = pi_pr
+        self.state["pi_pr"] = self.pi_pr()
         self.state["ratio"] = np.divide(self.state["pi_obs"], self.state["pi_pr"])
-        update = np.multiply(self.state["ratio"], self.state["weight"])
-        if len(bad := np.where(~np.isfinite(update))[0]) > 0:
-            raise ZeroDivisionError(
-                f"Predictability assumption violated for samples {len(bad)}/"
-                + f"{self.n_samples} samples."
-            )
-        self.state["pi_up"] = np.multiply(self.state["pi_in"], update)
+        self.state["weighted_ratio"] = np.multiply(
+            self.state["ratio"], self.state["weight"])
+        self.state["pi_up"] = np.multiply(
+            self.state["pi_in"], self.state['weighted_ratio'])
+        self.state["pred_assumption"] = self.state["weighted_ratio"].notna()
+        self.result['e_r'] = self.expected_ratio()
+        self.result['kl'] = self.divergence_kl()
+        self.result['k_eff'] = len(np.where(
+            self.state['weight'].values > 1e-10)[0]) / self.n_samples
+        self.result['k_eff_up'] = len(np.where(
+            self.state['weighted_ratio'].values > 1e-10)[0]) / self.n_samples
 
-        # Store result into result dataframe
-        results_cols = ["e_r", "kl"]
-        results = np.zeros((1, 2))
-        results[0, 0] = self.expected_ratio()
-        results[0, 1] = self.divergence_kl()
-        res_df = pd.DataFrame(results, columns=results_cols)
-        self.result = res_df
+        if num_violated := (~self.state["pred_assumption"]).sum() > 0:
+            msg = "Predictability assumption violated for samples" +\
+                f"{num_violated}/{self.n_samples} samples."
+            self.result['error'] = msg
+            raise ZeroDivisionError(msg)
+        else:
+            self.result['solved'] = True
 
     def expected_ratio(self):
         """Expectation Value of R
@@ -431,6 +577,25 @@ class DCIProblem(object):
             Value of the kl divergence.
         """
         return entropy(self.state["pi_obs"], self.state["pi_pr"])
+
+    def save_state(self, vals):
+        """
+        Save current state, adding columns with values in vals dictionary
+        """
+        keys = vals.keys()
+        cols = [c for c in self.state.columns if c.startswith("lam_")]
+        cols += [c for c in self.state.columns if c.startswith("q_pca_")]
+        cols += ["weight", "pi_in", "pi_obs", "pi_pr", "ratio",
+                 "weighted_ratio", "pi_up", "pred_assumption"]
+        state = self.state[cols].copy()
+        for key in keys:
+            state[key] = vals[key]
+        if len(self.states) == 0:
+            self.states = state
+        else:
+            self.states = pd.concat([self.states, state], axis=0)
+
+        self.results.append(self.result)
 
     def plot_L(
         self,

@@ -101,14 +101,15 @@ class PCAMUDProblem(MUDProblem):
         data,
         std_dev,
         pi_in=None,
+        weights=None,
     ):
-        self.init_prob(samples, data, std_dev, pi_in=pi_in)
+        self.init_prob(samples, data, std_dev, pi_in=pi_in, weights=weights)
 
     @property
     def n_qoi(self):
         return self.qoi.shape[1]
 
-    def init_prob(self, samples, data, std_dev, pi_in=None):
+    def init_prob(self, samples, data, std_dev, pi_in=None, weights=None):
         """
         Initialize problem
 
@@ -125,9 +126,9 @@ class PCAMUDProblem(MUDProblem):
             std_dev,
             pi_in=pi_in,
             pi_pr=None,
+            weights=weights,
         )
         self.qoi = self.q_lam
-        self.pca_states = None
 
     def q_pca(self, mask=None, max_nc=None):
         """
@@ -157,22 +158,6 @@ class PCAMUDProblem(MUDProblem):
         # Compute Q_PCA
         self.q_lam = residuals @ pca.components_.T
         self.state = put_df(self.state, "q_pca", self.q_lam, size=max_nc)
-
-    def save_state(self, vals):
-        """
-        Save current state, adding columns with values in vals dictionary
-        """
-        keys = vals.keys()
-        cols = [c for c in self.state.columns if c.startswith("lam_")]
-        cols += [c for c in self.state.columns if c.startswith("q_pca_")]
-        cols += ["weight", "pi_in", "pi_obs", "pi_pr", "ratio", "pi_up"]
-        state = self.state[cols].copy()
-        for key in keys:
-            state[key] = vals[key]
-        if self.pca_states is None:
-            self.pca_states = state
-        else:
-            self.pca_states = pd.concat([self.pca_states, state], axis=0)
 
     def solve(
         self,
@@ -226,120 +211,6 @@ class PCAMUDProblem(MUDProblem):
             self.result["pca_mask"] = str(pca_mask)
             self.q_lam = all_qoi
 
-    def solve_it(
-        self,
-        weights=None,
-        pca_components=[[0]],
-        pca_mask: List[int] = None,
-        pca_splits: List[int] = 1,
-        exp_thresh: float = 0.5,
-        state_extra: dict = None,
-    ):
-        """
-        Solve the parameter estimation problem
-
-        This extends the `MUDProblem` solution class by using the `q_pca()` map
-        to aggregate data between the observed and predicted values and
-        determine the best MUD estimate that fits the data.
-
-        Parameters
-        ----------
-        """
-        it_results = []
-        weights = [] if weights is None else weights
-        failed = False
-        if exp_thresh <= 0:
-            msg = f"Expected ratio thresh must be a float > 0: {exp_thresh}"
-            logger.error(msg)
-            raise ValueError(msg)
-        if isinstance(pca_splits, int) or pca_splits is None:
-            # Make even number of splits of all qoi if mask is not specified
-            pca_mask = np.arange(self.n_qoi) if pca_mask is None else pca_mask
-            pca_splits = [
-                range(x[0], x[-1] + 1) for x in np.array_split(pca_mask, pca_splits)
-            ]
-        elif isinstance(pca_splits, list):
-            if pca_mask is not None:
-                raise ValueError(
-                    "Cannot specify both pca_mask and non-integer pca_splits"
-                )
-        iterations = [(i, j) for i in pca_splits for j in pca_components]
-        prev_in = self.dists["pi_in"]
-        if len(iterations) == 0:
-            raise ValueError(f"No iterations specified: {pca_splits}, {pca_mask}")
-        for i, (pca_mask, pca_cs) in enumerate(iterations):
-            str_val = pca_mask if pca_mask is not None else "ALL"
-            logger.info(f"Iteration {i}: Solving using ({str_val}, {pca_cs})")
-
-            self.set_weights(weights)
-            try:
-                self.solve(
-                    pca_mask=pca_mask,
-                    pca_components=pca_cs,
-                )
-            except ZeroDivisionError as z:
-                if i == 0:
-                    z.msg = "Pred assumption failed on first iteration."
-                    raise z
-                else:
-                    logger.info(f"({i}): pred assumption failed - str({z})")
-                    failed = True
-            except KDEError as k:
-                if i == 0:
-                    k.msg = "Failed to estiamte KDEs on first iteration."
-                    raise k
-                else:
-                    logger.info(f"({i}): KDE estimation failed - str({k})")
-                    failed = True
-            except LinAlgError as l:
-                # * Thrown when pdf() method fails on pi_in from previous iteration
-                # TODO: Should we raise this error if on first iteration? Test this error better
-                if i == 0:
-                    l.msg = "Unknown linalg error on first iteration."
-                    raise l
-                else:
-                    logger.info(
-                        f"({i}): PDF on constructed kde failed. "
-                        + f"Highly correlated data, or curse of dim - str({l})"
-                    )
-                    failed = True
-            else:
-                e_r = self.result["e_r"].values[0]
-                if (diff := np.abs(e_r - 1.0)) > exp_thresh or failed:
-                    logger.info(f"|E(r) - 1| = {diff} > {exp_thresh} - Stopping")
-                    if i == 0:
-                        raise RuntimeError("No solution found within exp_thresh")
-                    failed = True
-
-            if failed:
-                logger.info(f"Resetting to last solution at {iterations[i-1]}")
-                self.set_weights(weights[:-1])
-                self.dists["pi_in"] = prev_in
-                logger.debug(f"dists: {self.dists}")
-                self.solve(
-                    pca_mask=iterations[i - 1][0],
-                    pca_components=iterations[i - 1][1],
-                )
-                break
-            else:
-                state_vals = {
-                    "iteration": len(it_results),
-                    "pca_components": str(pca_cs),
-                    "pca_mask": str(pca_mask),
-                }
-                if state_extra is not None:
-                    state_vals.update(state_extra)
-                self.save_state(state_vals)
-                it_results.append(self.result.copy())
-                it_results[-1]["i"] = len(it_results) - 1
-                if i != len(iterations) - 1:
-                    logger.info("Updating weights")
-                    weights.append(self.state["ratio"].values)
-                    prev_in = self.dists["pi_in"]
-
-        self.it_results = pd.concat(it_results)
-        self.result = self.it_results.iloc[[-1]]
-
     def plot_L(
         self,
         df=None,
@@ -383,11 +254,6 @@ class PCAMUDProblem(MUDProblem):
             Tuple of (1) matplotlib axis object where distributions where
             plotted and (2) List of labels that were plotted, in order plotted.
         """
-        # if self.pca_states is None:
-        #     df = self.state
-        # else:
-        #     iterations = self.pca_states["iteration"].unique()
-        #     df = self.pca_states[self.pca_states["iteration"] == iterations[iteration]]
 
         ax, labels = super().plot_L(
             lam_true=lam_true,

@@ -12,6 +12,11 @@ import pandas as pd
 from numpy.linalg import LinAlgError
 from numpy.typing import ArrayLike
 from scipy.stats import gaussian_kde
+from rich.table import Table
+from rich.text import Text
+from rich.console import Console
+from typing import Optional, List, Dict
+import io
 
 
 class KDEError(Exception):
@@ -331,3 +336,78 @@ def get_search_combinations(
         search_list = search_list[:max_num_combs]
 
     return search_list
+
+
+def print_rich_table(
+    df: pd.DataFrame,
+    columns: Optional[List[str]] = None,
+    vertical: bool = False,
+    max_width: int = None,
+    to_str: bool = True,
+    **kwargs,
+):
+    """
+    Print a pandas DataFrame as a rich table.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame to be printed.
+    columns : Optional[List[str]], default=None
+        List of columns to be displayed. If None, all columns will be displayed.
+    vertical : bool, default=False
+        If True, print the table vertically (key columns as rows), otherwise horizontally.
+    max_width : int, default=None
+        Maximum width of the columns. If None, no wrapping is applied.
+    kewargs: Optional[Dict], default=None
+        Additional keyword arguments to be passed to the Table constructor for modifying table attributes.
+    """
+    if columns:
+        df = df[columns]
+
+    table_kwargs = dict(show_header=True if not vertical else False, header_style="bold")
+    table_kwargs.update(kwargs)
+    table = Table(**table_kwargs)
+
+    if vertical:
+        table.add_column("Key", max_width=max_width)
+        table.add_column("Value", max_width=max_width)
+        for col in columns:
+            table.add_row(col, str(df[col].values[0]))
+    else:
+        for col in df.columns:
+            table.add_column(col, max_width=max_width)
+        for _, row in df.iterrows():
+            table.add_row(*map(str, row))
+
+    if to_str:
+        console = Console(file=io.StringIO(), width=120)
+        console.print(table)
+        return console.file.getvalue()
+    else:
+        return table
+
+
+def fmt_bytes(
+    nbytes,
+    search=False,
+    match=r'.',
+    style=None,
+    to_str=True,
+):
+    """
+    Go from system string to formatted output
+    """
+    # Convert bytes float into a human readable amount.
+    suffixes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+    i = 0
+    while nbytes >= 1024 and i < len(suffixes)-1:
+        nbytes /= 1024.
+        i += 1
+    f = ('%.2f' % nbytes).rstrip('0').rstrip('.')
+    text = '%s %s' % (f, suffixes[i])
+
+    if search and re.search(match, text) is None:
+        return None
+
+    return Text.assemble(text, style=style)

@@ -36,7 +36,7 @@ from scipy.stats import distributions as dist  # type: ignore
 
 from pydci import DCIProblem
 from pydci.log import log_table, logger
-from pydci.utils import get_df, put_df, set_shape
+from pydci.utils import get_df, put_df, set_shape, print_rich_table
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -112,10 +112,11 @@ class MUDProblem(DCIProblem):
         std_dev,
         pi_in=None,
         pi_pr=None,
+        weights=None,
     ):
-        self.init_prob(samples, data, std_dev, pi_in=pi_in, pi_pr=pi_pr)
+        self.init_prob(samples, data, std_dev, pi_in=pi_in, pi_pr=pi_pr, weights=weights)
 
-    def init_prob(self, samples, data, std_dev, pi_in=None, pi_pr=None):
+    def init_prob(self, samples, data, std_dev, pi_in=None, pi_pr=None, weights=None):
         """
         Initialize problem
 
@@ -136,7 +137,7 @@ class MUDProblem(DCIProblem):
             )
         self.data = set_shape(np.array(data), (-1, 1))
         pi_obs = dist.norm(loc=np.mean(data), scale=std_dev)
-        super().init_prob(samples, pi_obs, pi_in=pi_in, pi_pr=pi_pr)
+        super().init_prob(samples, pi_obs, pi_in=pi_in, pi_pr=pi_pr, weights=weights)
         self.mud_point = None
 
     def solve(self):

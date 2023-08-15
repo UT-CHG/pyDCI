@@ -101,54 +101,17 @@ class OfflineSequential(PCAMUDProblem):
         data,
         std_dev,
         pi_in=None,
+        weights=None,
     ):
-        self.init_prob(samples, data, std_dev, pi_in=pi_in)
-
-    def init_prob(self, samples, data, std_dev, pi_in=None):
-        """
-        Initialize problem
-
-        Initialize problem by setting the lambda samples, the values of the
-        samples pushed through the forward map, and the observe distribution
-        on the data. Can optionally as well set the initial and predicteed
-        distributions explicitly, and pass in weights to incorporate prior
-        beliefs on the `lam` sample sets.
-        """
-        # Assume gaussian error around mean of data with assumed noise
-        super().init_prob(
-            samples,
-            data,
-            std_dev,
-            pi_in=pi_in,
-        )
-        self.states = None
-        self.it_results = pd.DataFrame()
-
-    def save_state(self, vals):
-        """
-        Save current state, adding columns with values in vals dictionary
-        """
-        keys = vals.keys()
-        cols = [c for c in self.state.columns if c.startswith("lam_")]
-        cols += [c for c in self.state.columns if c.startswith("q_pca_")]
-        cols += ["weight", "pi_in", "pi_obs", "pi_pr", "ratio", "pi_up"]
-        state = self.state[cols].copy()
-        for key in keys:
-            state[key] = vals[key]
-        if self.states is None:
-            self.states = state
-        else:
-            self.states = pd.concat([self.states, state], axis=0)
+        self.init_prob(samples, data, std_dev, pi_in=pi_in, weights=weights)
 
     def solve(
         self,
-        weights=None,
         pca_components=1,
         pca_mask: List[int] = None,
         pca_splits: List[int] = 1,
         exp_thresh: float = 0.5,
         fail_on_partial: bool = True,
-        state_extra: dict = None,
     ):
         """
         Solve the parameter estimation problem
@@ -160,14 +123,11 @@ class OfflineSequential(PCAMUDProblem):
         Parameters
         ----------
         """
-        it_results = []
-        weights = [] if weights is None else weights
-        weights = [weights] if isinstance(weights, np.ndarray) else weights
-        failed = False
         if exp_thresh <= 0:
             msg = f"Expected ratio thresh must be a float > 0: {exp_thresh}"
             logger.error(msg)
             raise ValueError(msg)
+
         num_splits = 1
         pca_components = [list(range(pca_components))] if isinstance(
             pca_components, int) else pca_components
@@ -185,87 +145,71 @@ class OfflineSequential(PCAMUDProblem):
                     "Cannot specify both pca_mask and non-integer pca_splits"
                 )
         iterations = [(i, j) for i in pca_splits for j in pca_components]
-        prev_in = self.dists["pi_in"]
         if len(iterations) == 0:
             raise ValueError(f"No iterations specified: {pca_splits}, {pca_mask}")
+
+        weights = []
+        prev_in = self.dists["pi_in"]
+        it_results = []
         for i, (pca_mask, pca_cs) in enumerate(iterations):
             str_val = pca_mask if pca_mask is not None else "ALL"
             logger.info(f"Iteration {i}: Solving using ({str_val}, {pca_cs})")
 
-            self.set_weights(weights)
+            reason = None
             try:
                 super().solve(
                     pca_mask=pca_mask,
                     pca_components=pca_cs,
                 )
             except ZeroDivisionError as z:
-                if i == 0:
-                    z.msg = "Pred assumption failed on first iteration."
-                    raise z
-                else:
-                    logger.info(f"({i}): pred assumption failed - str({z})")
-                    failed = True
+                reason = f"({i}): pred assumption failed - str({z})"
             except KDEError as k:
-                if i == 0:
-                    k.msg = "Failed to estiamte KDEs on first iteration."
-                    raise k
-                else:
-                    logger.info(f"({i}): KDE estimation failed - str({k})")
-                    failed = True
+                reason = f"({i}): KDE estimation failed - str({k})"
             except LinAlgError as l:
-                # * Thrown when pdf() method fails on pi_in from previous iteration
-                # TODO: Should we raise this error if on first iteration? Test this error better
-                if i == 0:
-                    l.msg = "Unknown linalg error on first iteration."
-                    raise l
-                else:
-                    logger.info(
-                        f"({i}): PDF on constructed kde failed. "
-                        + f"Highly correlated data, or curse of dim - str({l})"
-                    )
-                    failed = True
+                reason = f"({i}): LinalError on pi_in, pi_pr distributions- str({l})"
             else:
                 e_r = self.result["e_r"].values[0]
-                if (diff := np.abs(e_r - 1.0)) > exp_thresh or failed:
-                    logger.info(f"|E(r) - 1| = {diff} > {exp_thresh} - Stopping")
-                    if i == 0:
-                        raise RuntimeError("No solution found within exp_thresh")
-                    failed = True
+                if (diff := np.abs(e_r - 1.0)) > exp_thresh:
+                    reason = f"|E(r) - 1| = {diff} > {exp_thresh} - Stopping"
 
-            if failed:
-                logger.info(f"Resetting to last solution at {iterations[i-1]}")
-                self.set_weights(weights[:-1])
-                self.dists["pi_in"] = prev_in
-                logger.debug(f"dists: {self.dists}")
-                self.solve(
-                    pca_mask=iterations[i - 1][0],
-                    pca_components=[iterations[i - 1][1]],
-                )
+            self.save_state({'iteration': i + 1})
+            it_results.append(self.result.copy())
+            it_results[-1]["i"] = len(it_results)
+            it_results[-1]["I"] = int(num_splits)
+
+            if reason is not None:
+                if i == 0 or fail_on_partial:
+                    reason = f"Failed to solve problem on iteration {i + 1} - {reason}"
+                    it_results[-1]["solved"] = False
+                    it_results[-1]["error"] = reason
+                else:
+                    logger.info(f"Resetting to last solution at {iterations[i-1]}")
+                    self.set_weights(weights[:-1])
+                    self.dists["pi_in"] = prev_in
+                    self.solve(
+                        pca_mask=iterations[i - 1][0],
+                        pca_components=[iterations[i - 1][1]],
+                    )
+                    solved_idx = i
+                    it_results.append(self.result.copy())
+                    it_results[-1]["i"] = solved_idx
+                    it_results[-1]["I"] = int(num_splits)
+                    reason = None
                 break
             else:
-                state_vals = {
-                    "iteration": len(it_results),
-                    "pca_components": str(pca_cs),
-                    "pca_mask": str(pca_mask),
-                    "pca_splits": num_splits,
-                }
-                if state_extra is not None:
-                    state_vals.update(state_extra)
-                self.save_state(state_vals)
-                it_results.append(self.result.copy())
-                it_results[-1]["i"] = len(it_results) - 1
-                it_results[-1]["num_splits"] = num_splits
                 if i != len(iterations) - 1:
                     logger.info("Updating weights")
                     weights.append(self.state["ratio"].values)
                     prev_in = self.dists["pi_in"]
+                    self.set_weights(weights)
 
-        self.it_results = pd.concat(it_results)
-        self.result = self.it_results.iloc[[-1]]
-        self.result = self.result.drop(columns=["i"])
+        self.results = it_results
+        self.result = self.results[-1]
+        self.result = self.result
 
-        if fail_on_partial and len(self.it_results) < len(iterations):
-            raise RuntimeError("Failed to solve problem through all iterations")
+        if reason is not None:
+            logger.error(reason)
+            raise RuntimeError(reason)
 
     def expected_ratio(self, iteration: int = -1) -> float:
         """Expectation Value of R
@@ -334,7 +278,7 @@ class OfflineSequential(PCAMUDProblem):
         """
         Retrieve the state of the system at the specified iteration
         """
-        if self.states is None:
+        if len(self.states) == 0:
             df = self.state
         else:
             iterations = self.states["iteration"].unique()
@@ -477,7 +421,7 @@ class OfflineSequential(PCAMUDProblem):
         Plot PCA iterations.
 
         Plots the initial distribution, the iterative updates, and the final solution
-        as stored in the self.it_results and self.states attributes of the
+        as stored in the self.results and self.states attributes of the
         PCAMUDselflem object, which are updated during a solve() call.
         The iterative updates correspond to using a re-weighted sequential data-consistent
         update, also known as "offline" sequential estimation, since iterations
@@ -571,7 +515,7 @@ class OfflineSequential(PCAMUDProblem):
         #     mud_args['color'] = kwargs['color']
         _, l = self.plot_L(
             param_idx=param_idx,
-            iteration=len(self.it_results) - 1,
+            iteration=len(self.results) - 1,
             initial_kwargs=None,
             update_kwargs=line_opts,
             mud_kwargs=mud_args,

@@ -34,6 +34,60 @@ from pydci.utils import (
     set_shape,
 )
 
+from pydantic import BaseModel, Field, validator
+
+
+class OnlineSequentialParams(BaseModel):
+    num_samples: int = Field(100, gt=10)
+
+    # ! Adaptive sampling on iterartions
+    max_sample_size: Optional[int] = None
+    samples_inc: Optional[int] = None
+
+    # ! Shift detection on iterations
+    exp_thresh: float = Field(0.5, gt=0.0)
+    kl_thresh: float = Field(4.5, gt=0.0)
+
+    # ! Adaptive time stepping
+    min_eff_sample_size: float = Field(1.0, gt=0.0)
+
+    @validator("num_samples")
+    def check_num_samples(cls, value):
+        if value < 50:
+            print("Warning: Using < 50 samples is not recommended")
+        return value
+
+    @validator("max_sample_size", pre=True, always=True)
+    def check_max_sample_size(cls, value, values):
+        num_samples = values.get('num_samples')
+        if value is None:
+            return num_samples
+        if value > 100000:
+            print("Warning: max_sample_size > 100k")
+        return value
+
+    @validator("samples_inc", pre=True, always=True)
+    def check_samples_inc(cls, value, values):
+        num_samples = values.get('num_samples')
+        max_sample_size = values.get('max_sample_size') or num_samples
+        if value is None:
+            return max(1, round((max_sample_size - num_samples) / 10))
+        if value >= max_sample_size - num_samples:
+            raise ValueError("samples_inc must be less than max_sample_size - num_samples")
+        return value
+
+    @validator("kl_thresh")
+    def check_kl_thresh(cls, value):
+        if value < 3.0:
+            print("Warning: kl_thresh is less than 3.0")
+        return value
+
+    @validator("min_eff_sample_size")
+    def check_min_eff_sample_size(cls, value):
+        if value >= 1.0:
+            print("Adaptive sampling is off as min_eff_sample_size is greater than or equal to 1.0")
+        return value
+
 
 class OnlineSequential:
     """
@@ -54,17 +108,20 @@ class OnlineSequential:
         self,
         model,
         time_step=1,
-        model_file=None,
+        model_file: str = None,
+        params: OnlineSequentialParams = None,
     ):
         self.model = model
         self.time_step = time_step
         self.model_file = model_file
+        self.params = params if params else OnlineSequentialParams()
 
         if self.model_file is not None:
             # Initialize model (which is a class not an instance in this case)
             logger.deubg(f'Loading model from file {model_file}')
             self.model = model(file=self.model_file)
 
+        self._last_solve_idx = None
         self.probs = []
         self.it_results = []
         self.result = None
@@ -80,6 +137,21 @@ class OnlineSequential:
     @property
     def n_sensors(self) -> int:
         return len(self.model.state_idxs)
+    
+    @property
+    def n_obs_ints(self) -> int:
+        """
+        Length of model data array, representing the number of observation intervals.
+        """
+        return len(self.model.data)
+
+    @property
+    def n_pred_ints(self) -> int:
+        """
+        Length of model sample array, representing the number of predicted state intervals.
+        Note each of these states corresponds to a sampling from a distribution.
+        """
+        return len(self.model.samples)
 
     def get_num_measurements(self, data_idx=-1) -> int:
         """
@@ -226,7 +298,7 @@ class OnlineSequential:
             results = pd.concat(self.it_results)
 
         sns.lineplot(
-            results.dropna(), x=x_vals, y='e_r', ax=ax, label="Iterative Expected Ratio", marker="o"
+            results, x=x_vals, y='e_r', ax=ax, label="Iterative Expected Ratio", marker="o"
         )
         xlims = ax.get_xlim()
         if e_r_thresh is not None:
@@ -262,7 +334,7 @@ class OnlineSequential:
             results = pd.concat(self.it_results)
 
         sns.lineplot(
-            results.dropna(),
+            results,
             x=x_vals,
             y='kl',
             color="green",
@@ -270,6 +342,7 @@ class OnlineSequential:
             label="$\mathrm{KL}(\pi^{up}_i | \pi^{up}_{i-1})$",
             marker="o",
         )
+        xlims = ax.get_xlim()
         if kl_thresh is not None:
             ax.hlines(
                 [kl_thresh],
@@ -302,9 +375,10 @@ class OnlineSequential:
 
         label = "$\Delta \mathrm{KL}(\pi^{up}_i | \pi^{up}_{i-1})$"
         sns.lineplot(
-            results.dropna(), x=x_vals, y='kl_delta', color="purple", ax=ax, label=label, marker="o"
+            results, x=x_vals, y='kl_delta', color="purple", ax=ax, label=label, marker="o"
         )
 
+        xlims = ax.get_xlim()
         if kl_thresh is not None:
             ax.hlines(
                 [kl_thresh],
@@ -384,7 +458,7 @@ class OnlineSequential:
             return False
 
         return True
-
+    
     def solve_till_thresh(
         self,
         data_idx,
@@ -441,22 +515,21 @@ class OnlineSequential:
 
         # * First see if there is information from a previous solve
         weights = None
-        if data_idx > 0 and len(self.it_results) > 0 and not reset:
+        if self._last_solve_idx is not None and not reset:
             # * Use last pi_up from previous as pi_in
-            pi_in = self.probs[data_idx-1].best.dists["pi_up"]
+            last_best = self.probs[self._last_solve_idx].best
+            pi_in = last_best.dists["pi_up"]
 
             # * Determine whether we keep samples from past iteration
-            weights = self.probs[data_idx-1].best.state['ratio'].values
-            eff_sample_ratio = len(np.where(weights > 1e-10)[0]) / len(
-               self.model.samples[data_idx-1])
-            logger.info(f"Effective sample ratio: {eff_sample_ratio}")
-            if eff_sample_ratio <= min_eff_sample_size:
+            weights = last_best.state['weighted_ratio'].values
+            eff_sample_ratio = last_best.result['k_eff_up'].values[-1]
+            if eff_sample_ratio <= min_eff_sample_size or self._last_solve_idx < (data_idx - 1):
                 # * Weights from last iteration are too refined
                 logger.info(f"Re-setting weights: {eff_sample_ratio} < " +
                             f"{min_eff_sample_size}).")
 
                 logger.info(f"Re-sampling from pi_up_{data_idx-1}")
-                samples = self.probs[data_idx-1].best.sample_dist(start_sample_size, dist="pi_up")
+                samples = last_best.sample_dist(start_sample_size, dist="pi_up")
                 weights = None
             else:
                 sample_size = len(self.model.samples[data_idx-1])
@@ -492,18 +565,18 @@ class OnlineSequential:
                 self.model.data[data_idx],
                 self.model.measurement_noise,
                 pi_in=pi_in,
+                weights=weights,
             )
             logger.debug(
                 f"Solving {'WEIGHTED' if weights is not None else 'UN-WEIGHTED'}" +
                 f" {sample_size} samples. Args: {solver_args}"
             )
-            solver_args['weights'] = weights
             solver_args['search_exp_thresh'] = exp_thresh
             try:
                 prob.solve(**solver_args)
             except RuntimeError as r:
                 if 'No solution found within' in str(r) or 'All combinations tried failed.' in str(r):
-                    logger.debug(f"Failed with {sample_size} samples:\n{prob.search_results}")
+                    logger.debug(f"Failed with {sample_size} samples:\n{prob.results}")
                 else:
                     raise r
             else:
@@ -511,36 +584,18 @@ class OnlineSequential:
 
             # TODO: Choose which of these to use
             weighted_flag = False if weights is None or len(weights) == 0 else True
-            try:
-                results.append(prob.search_results if prob.search_results
-                            is not None else pd.concat([p.result for p in prob.probs]))
-            except ValueError as v:
-                if 'All objects passed were None' in str(v):
-                    solved = False
-                    results.append(
-                        pd.DataFrame(
-                            np.repeat(
-                                np.array([[sample_size,
-                                           weighted_flag]]),
-                                len(prob.probs), axis=0
-                            ), columns=['num_samples', 'weighted']
-                        )
-                    )
-                else:
-                    raise v
-            else:
-                results[-1]['num_samples'] = sample_size
-                results[-1]['weighted'] = weighted_flag
+            results.append(prob.results)
+            results[-1]['num_samples'] = sample_size
+            results[-1]['weighted'] = weighted_flag
 
             if not solved:
                 if weights is not None and len(weights) > 0:
                     logger.info("Failed using weighted samples from previous " +
                                 "iteration -> Re-starting with a fresh set of " +
                                 "unweighted samples from the previous distribution")
-                    pi_in, samples = _get_samples(
-                        self.probs[data_idx-1].best.dists['pi_up'], start_sample_size
-                    )
+                    _, samples = _get_samples(pi_in, start_sample_size)
                     weights = None
+                    self.model.forward_solve(samples=samples, append=False, data_idx=data_idx)
                 elif sample_size >= max_sample_size:
                     logger.debug(f"Reached max sample size of {max_sample_size}")
                     break
@@ -550,7 +605,7 @@ class OnlineSequential:
                     sample_size += samples_inc
                     logger.debug(f"Solving forward model for {samples_inc} more samples")
                     self.model.forward_solve(samples=samples, append=True, data_idx=data_idx)
-        
+
         results = pd.concat(results)
         logger.info(
             f"Solved {'FAILED' if not solved else 'SUCCEEDED'} (s = {sample_size}). Results:\n{results}"
@@ -606,7 +661,7 @@ class OnlineSequential:
         if len(self.model.data) == 0:
             logger.info("No previous data -> Starting from initial")
             start_idx = 0
-            self.probs= []
+            self.probs = []
             self.it_results = []
         elif reset_model:
             logger.info("Resetting model -> Starting from initial")
@@ -623,7 +678,7 @@ class OnlineSequential:
                 self.probs = []
                 self.it_results = []
             else:
-                start_idx = len(self.probs)
+                start_idx = len(self.model.samples)
                 logger.info(f"Starting from iteration {start_idx}")
                 t0 = self.model.data[start_idx-1]['ts'].max()
 
@@ -666,6 +721,7 @@ class OnlineSequential:
             solved = False
             logger.debug(f'Starting solves for iteration {data_idx}')
             while not solved and num_tries < num_tries_per_it:
+
                 solved, results, prob = self.solve_till_thresh(
                     data_idx,
                     exp_thresh=exp_thresh,
@@ -679,11 +735,14 @@ class OnlineSequential:
                 )
                 self.it_results.append(results)
                 self.it_results[-1]['data_idx'] = data_idx
+                self.it_results[-1]['shift'] = False
 
                 if make_plots and i in make_plots:
                     self.make_summary_plots(data_idx=data_idx)
 
                 if solved:
+                    self._last_solve_idx = len(self.probs)
+                    self.best = prob.best
                     self.probs.append(prob)
                     best_flag = pd.DataFrame(
                         np.empty((len(self.model.samples[data_idx]), 1), dtype=bool),
@@ -694,10 +753,11 @@ class OnlineSequential:
                     self.model.samples[data_idx]["best_flag"] = best_flag['best_flag']
                     reset = False
                 else:
-                    if kl := np.mean(results.dropna()['kl']) > kl_thresh:
+                    if kl := np.mean(results['kl']) > kl_thresh:
                         # ! Change point detection -> E(r) bad with large KL divergence
                         logger.info(f"Avg KL value of {kl} > {kl_thresh} -> shifting time window")
                         reset = True
+                        self.it_results[-1]['shift'] = True
                     num_tries += 1
 
                     if num_tries >= num_tries_per_it:
@@ -706,8 +766,12 @@ class OnlineSequential:
                         # if i == 0:
                         #     RuntimeError("No solution found for first iteration")
                         self.probs.append(prob)
-                        reset = True
+                        # TODO: Skip? Here we always reset. but if in middle and have another solve from 
+                        # TODO: iteration i - 1, we can use that pi_up instead next iteration?
+                        reset = False
 
             # Advanced Time Steps
             t0 = tf
             tf += time_step
+
+        self.results = pd.concat(self.it_results)

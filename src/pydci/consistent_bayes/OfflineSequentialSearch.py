@@ -83,12 +83,14 @@ class OfflineSequentialSearch:
         data,
         std_dev,
         pi_in=None,
+        weights=None,
         store=True,
     ):
         self.data = data
         self.samples = samples
         self.std_dev = std_dev
         self.pi_in = pi_in
+        self.weights = weights
         self.store = store
 
         self.n_params = len([c for c in self.samples.columns if c.startswith("lam_")])
@@ -109,7 +111,7 @@ class OfflineSequentialSearch:
             )
 
         self.full_search_results = None
-        self.search_results = None
+        self.results = None
         self.result = None
         self.probs = []
         self.best = None
@@ -124,8 +126,6 @@ class OfflineSequentialSearch:
         exp_thresh: float = 0.5,
         best_method: str = "closest",
         fail_on_partial: bool = True,
-        pi_in=None,
-        weights=None,
         search_exp_thresh: float = 1e10,
         all_data=True,
         pca_range=None,
@@ -171,16 +171,9 @@ class OfflineSequentialSearch:
         )
         logger.info(f'Searching through combinations:\n{pd.DataFrame(search_list)}')
 
-        pi_in = self.pi_in if pi_in is None else pi_in
         all_search_results = []
         all_results = []
         probs = []
-
-        def _append_result(p, i):
-            all_search_results.append(prob.it_results.copy())
-            all_search_results[-1]["search_index"] = idx
-            all_results.append(prob.result.copy())
-            all_results[-1]["search_index"] = idx
 
         with alive_bar(
             len(search_list),
@@ -194,30 +187,23 @@ class OfflineSequentialSearch:
                     self.samples,
                     self.measurements,
                     self.std_dev,
-                    pi_in=pi_in,
+                    pi_in=self.pi_in,
+                    weights=self.weights,
                 )
 
                 args.update(dict(
                     fail_on_partial=fail_on_partial,
-                    weights=weights,
                 ))
                 logger.debug(f"Attempting solve with args: {args}")
                 try:
-                    prob.solve(**args, state_extra={"search_index": idx})
-                except ZeroDivisionError or KDEError or LinAlgError as e:
-                    logger.error(f"Failed: Ill-posed problem: {e}")
+                    prob.solve(**args)
                 except RuntimeError as r:
-                    if "No solution found within exp_thresh" in str(r):
-                        logger.error(f"Failed: No solution in exp_thresh: {r}")
-                        _append_result(prob, idx)
-                    elif "Failed to solve problem through all iterations" in str(r):
-                        logger.error(f"Failed: No solution found for all data: {r}")
-                        _append_result(prob, idx)
-                    else:
-                        logger.error(f"Failed: Unknown error: {r}. Contact developer.")
-                        raise r
-                else:
-                    _append_result(prob, idx)
+                    logger.error(f"Failed: to solve {idx}: {r}")
+
+                all_search_results.append(pd.concat([df.copy() for df in prob.results]))
+                all_search_results[-1]["search_index"] = idx
+                all_results.append(prob.result.copy())
+                all_results[-1]["search_index"] = idx
 
                 probs.append(prob)
                 bar()
@@ -225,33 +211,17 @@ class OfflineSequentialSearch:
         if self.store:
             self.probs = probs
 
-        failed = False
-        if len(all_results) == 0:
-            msg = (
-                "All combinations tried failed. If store set to True, "
-                + "check probs attribute for individual results, or turn on "
-                + "logging using pydci.log.enable_log()"
-            )
-            failed = True
-        else:
-            # Parse DataFrame with results of mud estimations for each ts choice
-            self.full_search_results = self._process_search_results(
-                all_search_results, exp_thresh
-            )
-            self.search_results = self._process_search_results(all_results, exp_thresh)
-            self.result = self.search_results[self.search_results[best_method]]
-            logger.debug(f'Search results:\n{self.search_results}')
-            self.best = (
-                None
-                if len(self.result) == 0
-                else probs[self.result["search_index"].values[0]]
-            )
-
-            if self.best is None:
-                msg = f"No solution found within exp_thresh {exp_thresh} for any solve"
-                failed = True
-
-        if failed:
+        self.results = self._process_search_results(all_results, exp_thresh)
+        self.full_search_results = self._process_search_results(
+            all_search_results, exp_thresh)
+        self.result = self.results[self.results[best_method]]
+        self.best = (
+            None
+            if len(self.result) == 0
+            else probs[self.result["search_index"].values[0]]
+        )
+        if self.best is None:
+            msg = f"No solution found within exp_thresh {exp_thresh} for any solve"
             logger.error(msg)
             raise RuntimeError(msg)
 
@@ -361,23 +331,26 @@ class OfflineSequentialSearch:
     ):
         """ """
         res_df = pd.concat(dfs)
-        if 'e_r' in res_df.columns:
-            res_df["predict_delta"] = np.abs(res_df["e_r"] - 1.0)
-            res_df["within_thresh"] = res_df["predict_delta"] <= exp_thresh
-            res_df["closest"] = np.logical_and(
-                res_df["predict_delta"]
-                <= res_df[res_df["within_thresh"]]["predict_delta"].min(),
-                res_df["within_thresh"],
-            )
-            res_df["max_kl"] = np.logical_and(
-                res_df["kl"] >= res_df[res_df["within_thresh"]]["kl"].max(),
-                res_df["within_thresh"],
-            )
-            res_df["min_kl"] = np.logical_and(
-                res_df["kl"] <= res_df[res_df["within_thresh"]]["kl"].min(),
-                res_df["within_thresh"],
-            )
-            return res_df
+        res_df["predict_delta"] = np.abs(res_df["e_r"] - 1.0)
+        res_df["within_thresh"] = res_df["predict_delta"] <= exp_thresh
+        res_df["valid"] = np.logical_and(
+            res_df["within_thresh"],
+            res_df["solved"],
+        )
+        res_df["closest"] = np.logical_and(
+            res_df["predict_delta"]
+            <= res_df[res_df["valid"]]["predict_delta"].min(),
+            res_df["valid"],
+        )
+        res_df["max_kl"] = np.logical_and(
+            res_df["kl"] >= res_df[res_df["valid"]]["kl"].max(),
+            res_df["valid"],
+        )
+        res_df["min_kl"] = np.logical_and(
+            res_df["kl"] <= res_df[res_df["valid"]]["kl"].min(),
+            res_df["valid"],
+        )
+        return res_df
 
     def plot_param_updates(
         self,
