@@ -527,6 +527,27 @@ class HeatModel(DynamicModel):
 
         plotter.close()
 
+    def plot_obs_state(self, data_idx=-1, plot_type='scatter', axs=None):
+        """
+        """
+        state_coords = self.coords[self.state_idxs]
+        data_df = self.data[data_idx]
+        data_df = data_df[data_df['sample_flag']]
+        obs_cols = ['q_lam_obs_{}'.format(i) for i in range(self.n_sensors)]
+        obs_states = data_df[obs_cols].to_numpy().reshape(len(data_df), self.n_sensors)
+
+        if axs is None:
+            fig, axs = plt.subplots(2, 5, figsize=(20, 8))
+
+        for i, ax in enumerate(axs.flatten()):
+            ax.set_title(f't={data_df["ts"].iloc[i]:.2e}')
+            if plot_type == 'scatter':
+                ax.scatter(state_coords[:, 0], state_coords[:, 1], c=obs_states[i, :], cmap='jet')
+            else:
+                ax.tricontour(state_coords[:, 0], state_coords[:, 1], c=obs_states[i, :], cmap='jet')
+
+        fig.suptitle('Observations', fontsize=20)
+
     def k_x_mud_plot(self, iteration=0, figsize=(18, 5)):
         """
         Plot estimated and True k(x)

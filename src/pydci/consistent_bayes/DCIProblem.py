@@ -693,7 +693,7 @@ class DCIProblem(object):
                 title_fontsize=12,
             )
 
-        plt.tight_layout()
+        # fig.tight_layout()
 
         return ax, labels
 
@@ -805,7 +805,7 @@ class DCIProblem(object):
                 fontsize=12,
                 title_fontsize=12,
             )
-        plt.tight_layout()
+        # plt.tight_layout()
 
         return ax, labels
 
