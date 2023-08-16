@@ -81,7 +81,7 @@ class OnlineSequential:
     @property
     def n_sensors(self) -> int:
         return len(self.model.state_idxs)
-    
+
     @property
     def n_obs_ints(self) -> int:
         """
@@ -402,7 +402,7 @@ class OnlineSequential:
             return False
 
         return True
-    
+
     def solve_till_thresh(
         self,
         data_idx,
@@ -488,7 +488,7 @@ class OnlineSequential:
                             f"{min_eff_sample_size}).")
                 # ! Note: Passing None to forward_solve will use the samples from the previous iteration
                 samples = None
-        else:
+        elif reset or len(self.model.samples) == 0:
             # * IF reset set, or first iteration, start from initial
             logger.info(f'Starting from initial Reset:{reset}, Data_Idx: ' +
                         f'{data_idx}\nSampling Args: {sampling_args}\n' +
@@ -498,8 +498,12 @@ class OnlineSequential:
             )
 
         # * Advance forward model for first set of samples.
-        logger.info(f"Advancing forward model for {sample_size} samples")
-        self.model.forward_solve(samples=samples, append=False, data_idx=data_idx)
+        # * Note at this point, samples should be cleared if reset set for the solve method
+        if data_idx > len(self.model.samples) - 1:
+            logger.info(f"Advancing forward model for {sample_size} samples")
+            self.model.forward_solve(samples=samples, append=False, data_idx=data_idx)
+        else:
+            logger.info(f"{len(self.model.samples[data_idx])} samples already exist for iteration {data_idx} and reset not set. Estimating using existing sample set.")
 
         solved = False
         results = []
@@ -645,8 +649,8 @@ class OnlineSequential:
 
         reset = False
         best_flag = pd.DataFrame(np.empty((num_samples, 1), dtype=bool))
-        logger.info(f"Starting online solve with {num_samples} samples")
         data_idx = start_idx
+        logger.info(f"Starting online solve with {num_samples} samples at data chunk {data_idx}")
         num_tries_per_it = min(2, num_tries_per_it)
         tf = t0 + time_step
         for i in range(num_its):

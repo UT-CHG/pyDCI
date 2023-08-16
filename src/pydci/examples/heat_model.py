@@ -2,6 +2,7 @@ import pdb
 from pathlib import Path
 from typing import Callable, List
 
+from matplotlib import ticker
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -12,6 +13,7 @@ from dolfinx import fem, io, mesh, plot
 from mpi4py import MPI
 from petsc4py import PETSc
 from scipy.stats.distributions import norm, uniform
+from pydci.utils import closest_factors, add_noise
 
 from pydci.log import logger
 from pydci.Model import DynamicModel
@@ -117,25 +119,24 @@ class HeatModel(DynamicModel):
         """
         Set thermal diffusivity field function over space
         """
-        if field is None:
-            field = self.lam_true
-        if mean is not None:
-            self.mean = mean
 
         # * Mean can be defined as function over coordiante grid or constant over whole grid.
-        if isinstance(self.mean, float) or isinstance(self.mean, int):
-            self.mean = float(self.mean) * np.ones(self.coords[:, 0].shape)
-        elif isinstance(self.mean, Callable):
-            self.mean = self.mean(self.coords[:, 0], self.coords[:, 1])
+        mean = mean if mean is not None else self.mean
+        if isinstance(mean, float) or isinstance(mean, int):
+            mean = float(mean) * np.ones(self.coords[:, 0].shape)
+        elif isinstance(mean, Callable):
+            mean = mean(self.coords[:, 0], self.coords[:, 1])
 
-        # * Field can either be a constant over coordinate grid, constant, or ndarray
-        if isinstance(field, float) or isinstance(field, int):
+        # * Field can either be a constant over coordinate grid, constant, or ndarray of shape of the grid
+        if field is None:
+            field_vals = self.reconstruct(self.lam_true, log=True)
+        elif isinstance(field, float) or isinstance(field, int):
             # Constant over the space
             field_vals = field * np.ones(len(self.coords[:, 0]))
         elif isinstance(field, Callable):
             # Project function onto space by evaluating over field
             field_vals = field([self.coords[:, 0], self.coords[:, 1]])
-        elif not isinstance(field, np.ndarray):
+        elif not isinstance(field, np.ndarray) or field.shape != mean.shape:
             raise ValueError(
                 "field must be either a float/int for constant"
                 + "over domain or a function, an array of KL "
@@ -193,7 +194,7 @@ class HeatModel(DynamicModel):
         if true_k_x is None:
             self.lam_true = np.random.normal(0, 1.0, [1, self.nmodes])[0]
         else:
-            if isinstance(true_k_x, np.ndarray) and true_k_x.hape[0] == self.nmodes:
+            if isinstance(true_k_x, np.ndarray) and true_k_x.shape[0] == self.nmodes:
                 self.lam_true = true_k_x
             else:
                 self.lam_true = self.project(field=true_k_x, mean=self.mean, log=True)
@@ -237,10 +238,11 @@ class HeatModel(DynamicModel):
         self.cov = self.sd**2 * np.exp(-0.5 * exp)
         self.modes = rf.calc_kl_modes(self.cov, nmodes=self.nmodes, normalize=normalize)
 
-    def reconstruct(self, projection, mean=None, log=True):
+    def reconstruct(self, projection=None, mean=None, log=True):
         """
         Given a set of kl coefficients
         """
+        projection = self.lam_true if projection is None else projection
         mean = self.mean if mean is None else mean
         if log:
             log_proj_vals = rf.reconstruct_kl(self.modes[1], projection, mean=0.0)
@@ -371,7 +373,7 @@ class HeatModel(DynamicModel):
 
         return sol
 
-    def take_snaps(self, data_df, sample_ts=0.01):
+    def take_snaps(self, data_df, sample_ts=0.01, noise=False):
         """
         Take snapshots of data at a given time interval.
         Snapshots consist of data frame with columns t_{i} for
@@ -385,6 +387,16 @@ class HeatModel(DynamicModel):
         times = [f"t_{i}" for i, t in enumerate(data["ts"])]
         true_cols = [col for col in data.columns if col.startswith("q_lam_true")]
         data = data[true_cols].values.T
+        d_shape = data.shape
+
+        if noise:
+            data = np.reshape(
+                add_noise(
+                    data.ravel(),
+                    self.measurement_noise,
+                ),
+                d_shape,
+            )
 
         return pd.DataFrame(data, columns=times)
 
@@ -401,7 +413,6 @@ class HeatModel(DynamicModel):
 
     def _process_field(self, field, project=False):
         """
-        
         """
         if field is None:
             field = self.reconstruct(self.lam_true)
@@ -443,6 +454,10 @@ class HeatModel(DynamicModel):
         if cbar:
             cbar = plt.colorbar(sc)
             cbar.set_label("F(x)")
+            formatter = ticker.ScalarFormatter(useMathText=True)
+            formatter.set_scientific(True)
+            formatter.set_powerlimits((0, 0))
+            cbar.ax.yaxis.set_major_formatter(formatter)
 
     def plot_kl_diff(self, field=None, **kwargs):
         """
@@ -526,7 +541,7 @@ class HeatModel(DynamicModel):
 
         plotter.close()
 
-    def plot_obs_state(self, data_idx=-1, plot_type='scatter', idxs=None, axs=None):
+    def plot_obs_state(self, data_idx=-1, plot_type='scatter', idxs=None, figsize=None, axs=None):
         """
         """
         state_coords = self.coords[self.state_idxs]
@@ -535,17 +550,36 @@ class HeatModel(DynamicModel):
         obs_cols = ['q_lam_obs_{}'.format(i) for i in range(self.n_sensors)]
         obs_states = data_df[obs_cols].to_numpy().reshape(len(data_df), self.n_sensors)
 
+        idxs = range(len(data_df)) if idxs is None else idxs
+
+        base_size = 4
+        grid_plot = closest_factors(len(idxs))
         if axs is None:
-            fig, axs = plt.subplots(2, 5, figsize=(20, 8))
+            fig, axs = plt.subplots(
+                grid_plot[0],
+                grid_plot[1],
+                figsize=figsize if figsize is not None else
+                (grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
+            )
 
         axs = axs.flatten()
-        idxs = range(axs) if idxs is None else idxs
+        if len(axs) != len(idxs):
+            raise ValueError('Number of axes must match number of idxs')
+
         for i, idx in enumerate(idxs):
             axs[i].set_title(f't={data_df["ts"].iloc[idx]:.2e}')
             if plot_type == 'scatter':
-                axs[i].scatter(state_coords[:, 0], state_coords[:, 1], c=obs_states[i, :], cmap='jet')
+                sc = axs[i].scatter(state_coords[:, 0], state_coords[:, 1], c=obs_states[i, :], cmap='jet')
+                cbar = plt.colorbar(sc, ax=axs[i])
             else:
-                axs[i].tricontour(state_coords[:, 0], state_coords[:, 1], c=obs_states[i, :], cmap='jet')
+                tc = axs[i].tricontour(state_coords[:, 0], state_coords[:, 1], obs_states[i, :], cmap='jet')
+                cbar = plt.colorbar(tc, ax=axs[i])
+
+            # Set the color bar to use scientific notation
+            formatter = ticker.ScalarFormatter(useMathText=True)
+            formatter.set_scientific(True)
+            formatter.set_powerlimits((0, 0))
+            cbar.ax.yaxis.set_major_formatter(formatter)
 
         # ax.suptitle('Observations', fontsize=20)
 
