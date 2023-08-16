@@ -145,7 +145,7 @@ class HeatModel(DynamicModel):
 
         if log:
             log_vals = np.log(field_vals / mean)
-            return rf.project_kl(log_vals, self.modes[1], mean=np.log(mean))
+            return rf.project_kl(log_vals, self.modes[1], mean=0.0)
         else:
             return rf.project_kl(field_vals, self.modes[1], mean=mean)
 
@@ -191,9 +191,9 @@ class HeatModel(DynamicModel):
         # Initialize thermal diffusivity - Project true_k_x onto KL field,
         # Then reconstruct and set to kx array for variatonal prob
         if true_k_x is None:
-            self.lam_true = np.random.normal(0, 1, [1, self.nmodes])[0]
+            self.lam_true = np.random.normal(0, 1.0, [1, self.nmodes])[0]
         else:
-            if isinstance(true_k_x, np.ndarray) and true_k_x.shape[0] == self.nmodes:
+            if isinstance(true_k_x, np.ndarray) and true_k_x.hape[0] == self.nmodes:
                 self.lam_true = true_k_x
             else:
                 self.lam_true = self.project(field=true_k_x, mean=self.mean, log=True)
@@ -243,8 +243,7 @@ class HeatModel(DynamicModel):
         """
         mean = self.mean if mean is None else mean
         if log:
-            mean = np.log(self.mean)
-            log_proj_vals = rf.reconstruct_kl(self.modes[1], projection, mean=mean)
+            log_proj_vals = rf.reconstruct_kl(self.modes[1], projection, mean=0.0)
             return self.mean * np.exp(log_proj_vals)[:, 0]
         else:
             return rf.reconstruct_kl(self.modes[1], projection, mean=mean)
@@ -527,7 +526,7 @@ class HeatModel(DynamicModel):
 
         plotter.close()
 
-    def plot_obs_state(self, data_idx=-1, plot_type='scatter', axs=None):
+    def plot_obs_state(self, data_idx=-1, plot_type='scatter', idxs=None, axs=None):
         """
         """
         state_coords = self.coords[self.state_idxs]
@@ -539,14 +538,16 @@ class HeatModel(DynamicModel):
         if axs is None:
             fig, axs = plt.subplots(2, 5, figsize=(20, 8))
 
-        for i, ax in enumerate(axs.flatten()):
-            ax.set_title(f't={data_df["ts"].iloc[i]:.2e}')
+        axs = axs.flatten()
+        idxs = range(axs) if idxs is None else idxs
+        for i, idx in enumerate(idxs):
+            axs[i].set_title(f't={data_df["ts"].iloc[idx]:.2e}')
             if plot_type == 'scatter':
-                ax.scatter(state_coords[:, 0], state_coords[:, 1], c=obs_states[i, :], cmap='jet')
+                axs[i].scatter(state_coords[:, 0], state_coords[:, 1], c=obs_states[i, :], cmap='jet')
             else:
-                ax.tricontour(state_coords[:, 0], state_coords[:, 1], c=obs_states[i, :], cmap='jet')
+                axs[i].tricontour(state_coords[:, 0], state_coords[:, 1], c=obs_states[i, :], cmap='jet')
 
-        fig.suptitle('Observations', fontsize=20)
+        # ax.suptitle('Observations', fontsize=20)
 
     def k_x_mud_plot(self, iteration=0, figsize=(18, 5)):
         """
