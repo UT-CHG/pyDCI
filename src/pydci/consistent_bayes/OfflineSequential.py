@@ -205,7 +205,6 @@ class OfflineSequential(PCAMUDProblem):
 
         self.results = it_results
         self.result = self.results[-1]
-        self.result = self.result
 
         if reason is not None:
             logger.error(reason)
