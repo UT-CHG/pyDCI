@@ -277,10 +277,14 @@ class OfflineSequential(PCAMUDProblem):
         """
         Retrieve the state of the system at the specified iteration
         """
-        if len(self.states) == 0:
+        if len(self.states) == 0 or iteration == -1:
             df = self.state
         else:
             iterations = self.states["iteration"].unique()
+            if iteration not in iterations:
+                msg = f'Iteration {iteration} not in saved states: {iterations}'
+                logger.error(msg)
+                raise ValueError(msg)
             df = self.states[self.states["iteration"] == iterations[iteration]]
 
         return df

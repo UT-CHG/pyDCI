@@ -587,7 +587,7 @@ class DynamicModel:
         samples = dist.rvs(size=(num_samples, self.n_params))
         return dist, samples
 
-    def get_normal_initial_samples(self, num_samples=100, mean=1.0, std_dev=1.0):
+    def get_normal_initial_samples(self, num_samples=100, mean=0.0, std_dev=1.0):
         """
         Generate initial samples from uniform distribution over domain set by
         `self.set_domain`.

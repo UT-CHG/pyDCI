@@ -428,7 +428,7 @@ class HeatModel(DynamicModel):
 
         return field
 
-    def plot_field(self, field=None, project=False, cbar=True, diff=None, **kwargs):
+    def plot_field(self, field=None, project=False, cbar=True, diff=None, relative_error=True, **kwargs):
         """
         Plot a field characterized by either:
           1. function - field is a callable on the coordinates array. This
@@ -444,12 +444,15 @@ class HeatModel(DynamicModel):
 
         field = self._process_field(field, project=project)
         if diff is not None:
-            field = field - self._process_field(diff, project=project)
+            if relative_error:
+                field = (field - self._process_field(diff, project=project))/np.mean(field)
+            else:
+                field = (field - self._process_field(diff, project=project))
 
         sc = ax.scatter(self.coords[:, 0], self.coords[:, 1], c=field, cmap="seismic")
         ax.set_xlabel("$x_1$")
         ax.set_ylabel("$x_2$")
-        ax.set_title("Field Sample $k(\mathbf{x})$")
+        ax.set_title("$k(\mathbf{x})$")
 
         if cbar:
             cbar = plt.colorbar(sc)
