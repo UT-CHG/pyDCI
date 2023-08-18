@@ -229,7 +229,7 @@ class DynamicModel:
         """
         path = f"{self.__class__}.h5" if path is None else path
 
-        allowable_types = [int, float, str, bool, list, pd.DataFrame, np.ndarray]
+        allowable_types = [int, float, str, bool, list, tuple, pd.DataFrame, np.ndarray]
         info_dict = dict(
             [
                 (x, getattr(self, x))
@@ -571,6 +571,8 @@ class DynamicModel:
         """
         Generate initial samples from uniform distribution over domain set by
         `self.set_domain`.
+
+        TODO: Store domain as class attribute
         """
         if domain is None:
             center = self.lam_true if center is None else center

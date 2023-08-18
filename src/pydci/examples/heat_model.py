@@ -1,6 +1,6 @@
 import pdb
 from pathlib import Path
-from typing import Callable, List
+from typing import Callable, List, Optional, Union
 
 from matplotlib import ticker
 import matplotlib.pyplot as plt
@@ -222,6 +222,9 @@ class HeatModel(DynamicModel):
         normalize : bool, optional
             Whether to normalize the KL modes.
         """
+        if 'cov' in self.__dict__.keys() and 'modes' in self.__dict__.keys():
+            logger.debug('KL modes already initialized')
+            return
         if lscales is not None:
             self.lscales = lscales
         if nmodes is not None:
@@ -411,8 +414,26 @@ class HeatModel(DynamicModel):
 
         return ax, kwargs
 
-    def _process_field(self, field, project=False):
+    def process_field(self, field: Optional[Union[Callable, np.ndarray]], 
+                    project: bool = False) -> np.ndarray:
         """
+        Processes the given field based on the provided conditions. If the field is callable,
+        it may be projected and reconstructed. If it's None, a reconstruction of 
+        `lam_true` is used. If it's an array with the same shape as `lam_true`, it's 
+        reconstructed.
+
+        Parameters
+        ----------
+        field : Optional[Union[Callable, np.ndarray]]
+            The input field, which can be a callable or an array. If None, `lam_true` is used.
+        project : bool, optional
+            If True and the field is callable, it will be projected before reconstruction.
+            Default is False.
+
+        Returns
+        -------
+        np.ndarray
+            The processed field.
         """
         if field is None:
             field = self.reconstruct(self.lam_true)
@@ -428,31 +449,64 @@ class HeatModel(DynamicModel):
 
         return field
 
-    def plot_field(self, field=None, project=False, cbar=True, diff=None, relative_error=True, **kwargs):
+    def plot_field(
+        self, field: Optional[Union[Callable, np.ndarray]] = None,
+        project: bool = False, cbar: bool = True, 
+        diff: Optional[Union[Callable, np.ndarray]] = None,
+        relative_error: bool = True,
+        **kwargs) -> None:
         """
-        Plot a field characterized by either:
-          1. function - field is a callable on the coordinates array. This
-          function is evaluated on the grid, projected onto the KL expansion,
-          and plotted.
-          2. An array - field values as a matrix over the coordinate array.
-          This is projected onto KL expansion and plotted.
-          3. Parameter array - Coefficients of KL modes to expand.
-        If nothing is passed in the field argument, the true field as stored by
-        on initialization is plotted.
+        Plot a field characterized by either a callable function, an array of field 
+        values, or coefficients of KL modes. If no field is provided, the true field 
+        stored on initialization is plotted.
+
+        Parameters
+        ----------
+        field : Optional[Union[Callable, np.ndarray]], optional
+            The input field to plot, which can be a callable or an array. If None, 
+            the true field as stored on initialization is plotted. Default is None.
+        project : bool, optional
+            If True, the field will be projected onto the KL expansion. Default is False.
+        cbar : bool, optional
+            If True, a color bar will be added to the plot. Default is True.
+        diff : Optional[Union[Callable, np.ndarray]], optional
+            If provided, the difference between this field and the original field will
+            be plotted. Default is None.
+        relative_error : bool, optional
+            If True and `diff` is provided, the plot will represent relative error.
+            Default is True.
+        **kwargs
+            Additional keyword arguments for customization.
+
+        Returns
+        -------
+        None
+            Plots the field.
         """
         ax, kwargs = self._init_axis(**kwargs)
 
-        field = self._process_field(field, project=project)
+        field = self.process_field(field, project=project)
+        title = '$k(\mathbf{x})$'
         if diff is not None:
+            plot_field = np.abs(field - self.process_field(diff, project=project))
             if relative_error:
-                field = (field - self._process_field(diff, project=project))/np.mean(field)
+                error = np.linalg.norm(plot_field)/np.linalg.norm(field)
+                # title = f'$\\frac{{||(k^\\mathrm{{MUD}}(x)) - k^\\dagger(x)||}}{{||k^\\dagger(x)||}}$ = {error:.3e}'
+                title = f'$||(k^\\mathrm{{MUD}}(x)) - k^\\dagger(x)||/||k^\\dagger(x)||$ = {error:.3e}'
             else:
-                field = (field - self._process_field(diff, project=project))
+                error = np.linalg.norm(plot_field)
+                title = f'$||(k^\\mathrm{{MUD}}(x)) - k^\\dagger(x)||$ = {error:.3e}'
+            cmap = 'viridis'
+        else:
+            plot_field = field
+            cmap = 'seismic'
 
-        sc = ax.scatter(self.coords[:, 0], self.coords[:, 1], c=field, cmap="seismic")
+        args = {'c': plot_field, 'cmap': cmap}
+        args.update(kwargs)
+        sc = ax.scatter(self.coords[:, 0], self.coords[:, 1], **args)
         ax.set_xlabel("$x_1$")
         ax.set_ylabel("$x_2$")
-        ax.set_title("$k(\mathbf{x})$")
+        ax.set_title(title)
 
         if cbar:
             cbar = plt.colorbar(sc)
