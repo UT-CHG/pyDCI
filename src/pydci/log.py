@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.text import Text
 from rich.traceback import install
-install(show_locals=True)
+# install(show_locals=False, max_frames=5)
 
 
 def log_table(rich_table):
@@ -66,7 +66,7 @@ def enable_log(
         logger.configure(
             handlers=[
                 {
-                    "sink": RichHandler(markup=True, rich_tracebacks=True),
+                    "sink": RichHandler(markup=True, rich_tracebacks=False),
                     "level": level,
                     "format": fmt,
                     "filter": filter,

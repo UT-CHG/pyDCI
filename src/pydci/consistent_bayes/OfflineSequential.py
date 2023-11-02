@@ -162,11 +162,11 @@ class OfflineSequential(PCAMUDProblem):
                     pca_components=pca_cs,
                 )
             except ZeroDivisionError as z:
-                reason = f"({i}): pred assumption failed - str({z})"
+                reason = str(z)
             except KDEError as k:
-                reason = f"({i}): KDE estimation failed - str({k})"
+                reason = f"({i}): KDE estimation failed:\n{str(k)}"
             except LinAlgError as l:
-                reason = f"({i}): LinalError on pi_in, pi_pr distributions- str({l})"
+                reason = f"({i}): LinalError on pi_in, pi_pr distributions:\n{str(l)}"
             else:
                 e_r = self.result["e_r"].values[0]
                 if (diff := np.abs(e_r - 1.0)) > exp_thresh:
@@ -179,7 +179,7 @@ class OfflineSequential(PCAMUDProblem):
 
             if reason is not None:
                 if i == 0 or fail_on_partial:
-                    reason = f"Failed to solve problem on iteration {i + 1} - {reason}"
+                    reason = f"Failed on iteration {i + 1}:\n{reason}"
                     it_results[-1]["solved"] = False
                     it_results[-1]["error"] = reason
                 else:
@@ -276,6 +276,12 @@ class OfflineSequential(PCAMUDProblem):
     def get_iteration_state(self, iteration=-1):
         """
         Retrieve the state of the system at the specified iteration
+
+        Note states are one-indexed in the state table, but assuming arguments here are 0 indexed. 
+        Subtract one from states in the table to get.
+        Pass in -1 to get the current iteration.
+
+        TODO: Review the indexing here
         """
         if len(self.states) == 0 or iteration == -1:
             df = self.state
@@ -285,7 +291,7 @@ class OfflineSequential(PCAMUDProblem):
                 msg = f'Iteration {iteration} not in saved states: {iterations}'
                 logger.error(msg)
                 raise ValueError(msg)
-            df = self.states[self.states["iteration"] == iterations[iteration]]
+            df = self.states[self.states["iteration"] == iterations[iteration - 1]]
 
         return df
 
@@ -460,7 +466,7 @@ class OfflineSequential(PCAMUDProblem):
         # Plot initial distribution
         _, labels = self.plot_L(
             param_idx=param_idx,
-            iteration=0,
+            iteration=1,
             initial_kwargs={
                 "color": "black",
                 "linestyle": ":",
@@ -499,7 +505,7 @@ class OfflineSequential(PCAMUDProblem):
                 line_opts["linestyle"] = next(linecycler)
                 _, l = self.plot_L(
                     param_idx=param_idx,
-                    iteration=it,
+                    iteration=it + 1,
                     initial_kwargs=None,
                     update_kwargs=line_opts,
                     mud_kwargs=None,
@@ -518,7 +524,7 @@ class OfflineSequential(PCAMUDProblem):
         #     mud_args['color'] = kwargs['color']
         _, l = self.plot_L(
             param_idx=param_idx,
-            iteration=len(self.results) - 1,
+            iteration=len(self.results),
             initial_kwargs=None,
             update_kwargs=line_opts,
             mud_kwargs=mud_args,

@@ -1,10 +1,9 @@
 """
-Consistent Bayesian Formulation for Data-Consistent Inversion
+Data Consistent Inversion Problem
 
 The classes in this module all derive off of the Consistent-Bayesian formulation
-for solving Stochastic Inverse problems first proposed in [1]. The classes all
-inherit from the base class, `DCIProblem` and all have the following structure
-in general in terms of how they are to be used:
+for solving Stochastic Inverse problems first proposed in [1]. 
+Inherited classes have the form:
 
 1. Initialization: Upon initailization the state of the system is set,
 including parameter samples, their values evaluated through the forward model,
@@ -25,12 +24,7 @@ Problems,” SIAM J. Sci. Comput., vol. 40, no. 2, pp. A984–A1011, Jan. 2018,
 doi: 10.1137/16M1087229.
 
 """
-import itertools
-import pdb
-import random
 from typing import Callable, List, Optional, Union
-from rich.console import Console
-from rich.table import Table
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -39,15 +33,11 @@ import seaborn as sns
 from numpy.typing import ArrayLike
 from scipy.stats import rv_continuous  # type: ignore
 from scipy.stats import entropy, gaussian_kde
-from sklearn.decomposition import PCA  # type: ignore
-from sklearn.preprocessing import StandardScaler  # type: ignore
 
-from pydci.log import disable_log, enable_log, log_table, logger
 from pydci.plotting import DEF_RC_PARAMS
 from pydci.utils import (
     KDEError,
     closest_factors,
-    fit_domain,
     get_df,
     gkde,
     put_df,
@@ -541,9 +531,10 @@ class DCIProblem(object):
         self.result['k_eff_up'] = len(np.where(
             self.state['weighted_ratio'].values > 1e-10)[0]) / self.n_samples
 
-        if num_violated := (~self.state["pred_assumption"]).sum() > 0:
-            msg = "Predictability assumption violated for samples" +\
-                f"{num_violated}/{self.n_samples} samples."
+        num_violated = (~self.state["pred_assumption"]).sum()
+        if num_violated > 0:
+            msg = "Obsered/Predicted = Inf for " +\
+                f"{num_violated}/{self.n_samples} samples"
             self.result['error'] = msg
             raise ZeroDivisionError(msg)
         else:
@@ -654,7 +645,7 @@ class DCIProblem(object):
         # deep_colors = sns.color_palette("deep", n_colors=self.n_params)
 
         if initial_kwargs is not None:
-            pi_in_label = f"$\pi^{{in}}_{{\lambda_{param_idx}}}$"
+            pi_in_label = rf"$\pi^{{in}}_{{\lambda_{param_idx}}}$"
             init_args = dict(
                 data=df,
                 x=f"{param_col}_{param_idx}",
@@ -670,7 +661,7 @@ class DCIProblem(object):
             labels.append(init_args["label"])
 
         if update_kwargs is not None:
-            pi_up_label = f"$\pi^{{up}}_{{\lambda_{param_idx}}}$"
+            pi_up_label = rf"$\pi^{{up}}_{{\lambda_{param_idx}}}$"
             update_args = dict(
                 data=df,
                 x=f"{param_col}_{param_idx}",
@@ -685,7 +676,7 @@ class DCIProblem(object):
             labels.append(update_args["label"])
 
         # Set plot specifications
-        ax.set_xlabel(f"$\lambda_{param_idx}$")
+        ax.set_xlabel(rf"$\lambda_{param_idx}$")
         if plot_legend:
             ax.legend(
                 labels=labels,
@@ -761,7 +752,7 @@ class DCIProblem(object):
         # deep_colors = sns.color_palette("deep", n_colors=number_parameters)
 
         # Plot predicted distribution
-        pr_label = "$\pi^{{pr}}_{{Q(\lambda)_{state_idx}}}$"
+        pr_label = rf"$\pi^{{pr}}_{{Q(\lambda)_{state_idx}}}$"
         sns.kdeplot(
             data=self.state,
             x=f"{state_col}_{state_idx}",
@@ -773,7 +764,7 @@ class DCIProblem(object):
         )
         labels.append(pr_label)
         if plot_pf:
-            pf_label = f"$\pi^{{pf}}_{{Q(\lambda)_{state_idx}}}$"
+            pf_label = rf"$\pi^{{pf}}_{{Q(\lambda)_{state_idx}}}$"
             sns.kdeplot(
                 data=self.state,
                 x=f"{state_col}_{state_idx}",
@@ -788,7 +779,7 @@ class DCIProblem(object):
 
         # TODO: How to plot this using SNS?
         if plot_obs:
-            obs_label = "$\pi^{{obs}}_{{Q(\lambda)}}$"
+            obs_label = r"$\pi^{{obs}}_{{Q(\lambda)}}$"
             obs_domain = ax.get_xlim()
             obs_x = np.linspace(obs_domain[0], obs_domain[1], 10000)
             obs_x_marginal = np.zeros((len(obs_x), self.n_states))

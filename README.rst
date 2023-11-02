@@ -42,6 +42,14 @@ A longer description of your project goes here...
 
 .. _pyscaffold-notes:
 
+Installation
+============
+
+full conda set-up required:
+
+    conda create -n pyDCI
+    conda install -c conda-forge fenics-dolfinx mpich pyvista pytables
+
 Note
 ====
 

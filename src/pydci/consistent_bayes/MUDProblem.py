@@ -1,7 +1,6 @@
 """
 Maximal Updated Density (MUD) Problem Class
 
-
 The classes in this module all derive off of the Consistent-Bayesian formulation
 for solving Stochastic Inverse problems first proposed in [1]. The classes all
 inherit from the base class, `DCIProblem` and all have the following structure

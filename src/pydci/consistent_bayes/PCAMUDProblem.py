@@ -195,13 +195,13 @@ class PCAMUDProblem(MUDProblem):
         try:
             super().solve()
         except ZeroDivisionError as z:
-            logger.exception(
+            logger.error(
                 f"({pca_mask}: {pca_components}): "
                 + "Predictabiltiy assumption violated"
             )
             raise z
         except KDEError as k:
-            logger.exception(
+            logger.error(
                 f"({pca_mask}: {pca_components}): "
                 + "Unable to perform kernel density estimates"
             )
@@ -360,9 +360,7 @@ class PCAMUDProblem(MUDProblem):
         lam_kwargs = {} if lam_kwargs is None else lam_kwargs
         q_lam_kwargs = {} if q_lam_kwargs is None else q_lam_kwargs
         lam_kwargs["ax"] = axs[0]
-        lam_kwargs["nc"] = nc
         q_lam_kwargs["ax"] = axs[1]
-        q_lam_kwargs["nc"] = nc
         self.plot_L(**lam_kwargs)
         self.plot_D(**q_lam_kwargs)
         lam_true = lam_kwargs.get("lam_true", None)

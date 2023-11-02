@@ -4,7 +4,7 @@ pyDCI Utilities
 """
 import pdb
 from itertools import product
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union, Optional
 
 import math
 import numpy as np
@@ -15,7 +15,6 @@ from scipy.stats import gaussian_kde
 from rich.table import Table
 from rich.text import Text
 from rich.console import Console
-from typing import Optional, List, Dict
 import io
 
 
@@ -305,7 +304,9 @@ def get_search_combinations(
     # * 1. # PCA component : Restrict by min of n_params/max_nc, or n_samples
     if pca_range is None:
         max_nc = min(order_of_magnitude(n_samples), max_nc)
-        pca_range = range(min(max_nc, data_chunk_size))
+        pca_range = range(1, min(max_nc, data_chunk_size))
+        if len(pca_range) == 0:
+            pca_range = [1]
 
     # * 2. # Data Points : Increasing groups of data_chunk_size
     if mask_range is None:

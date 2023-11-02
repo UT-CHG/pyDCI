@@ -1,5 +1,5 @@
 """
-Consistent Bayesian Formulation for Data-Consistent Inversion
+Offline Sequential Search - Data Consistent Parameter Estimation
 
 The classes in this module all derive off of the Consistent-Bayesian formulation
 for solving Stochastic Inverse problems first proposed in [1]. The classes all
@@ -194,11 +194,11 @@ class OfflineSequentialSearch:
                 args.update(dict(
                     fail_on_partial=fail_on_partial,
                 ))
-                logger.debug(f"Attempting solve with args: {args}")
+                logger.info(f"Attempting solve with args: {args}")
                 try:
                     prob.solve(**args)
-                except RuntimeError as r:
-                    logger.error(f"Failed: to solve {idx}: {r}")
+                except RuntimeError:
+                    logger.error(f"Failed {idx} with args {args}")
 
                 all_search_results.append(pd.concat([df.copy() for df in prob.results]))
                 all_search_results[-1]["search_index"] = idx
@@ -399,11 +399,11 @@ class OfflineSequentialSearch:
         # Plot initial distribution
         _, labels = probs[0].plot_L(
             param_idx=param_idx,
-            iteration=0,
+            iteration=1,
             initial_kwargs={
                 "color": "black",
                 "linestyle": ":",
-                "label": "$\pi^\mathrm{init}$",
+                "label": r"$\pi^\mathrm{init}$",
             },
             update_kwargs=None,
             mud_kwargs=None,
@@ -432,14 +432,14 @@ class OfflineSequentialSearch:
                 ls = next(linecycler)
                 line_opts[
                     "label"
-                ] = f"$(\pi^\mathrm{{up}}_{{\lambda_{param_idx}}})_{{s = {si}}}$"
+                ] = rf"$(\pi^\mathrm{{up}}_{{\lambda_{param_idx}}})_{{s = {si}}}$"
                 line_opts["color"] = colors[i]
                 line_opts["linestyle"] = ls
                 mud_args = {
                     "color": colors[i],
                     "linestyle": ls,
                     "linewidth": 2,
-                    "label": f"$(\lambda^\mathrm{{MUD}})_{{s = {si}}} =  $"
+                    "label": rf"$(\lambda^\mathrm{{MUD}})_{{s = {si}}} =  $"
                     + f"{probs[si].mud_point[param_idx]:.2e}",
                 }
                 _, l = probs[si].plot_L(
@@ -485,7 +485,7 @@ class OfflineSequentialSearch:
             ax.set_xlim(
                 xlims[0] - (xlims[1] - xlims[0]), xlims[1] + (xlims[1] - xlims[0])
             )
-            ax.set_title(f"$\lambda_{i}$")
+            ax.set_title(rf"$\lambda_{i}$")
 
         fig.suptitle(
             self._parse_title(
@@ -539,7 +539,7 @@ class OfflineSequentialSearch:
                 xmax=1.0,
                 color="black",
                 linestyle=":",
-                label="$\mathbb{E}(r)$ ≈ 1",
+                label=r"$\mathbb{E}(r)$ ≈ 1",
             )
             if e_r_thresh is not None:
                 ax.hlines(
@@ -548,7 +548,7 @@ class OfflineSequentialSearch:
                     xmax=1.0,
                     color="blue",
                     linestyle=":",
-                    label=f"$\pm \epsilon_\mathrm{{pred}} = {e_r_thresh}$",
+                    label=rf"$\pm \epsilon_\mathrm{{pred}} = {e_r_thresh}$",
                 )
         if metric == "kl":
             ax.hlines(
@@ -557,12 +557,12 @@ class OfflineSequentialSearch:
                 xmax=1.0,
                 color="red",
                 linestyle=":",
-                label=f"$\epsilon_\delta = {kl_thresh}$",
+                label=rf"$\epsilon_\delta = {kl_thresh}$",
             )
         ax.set_xlabel(x_label)
         labels = {
-            "kl": "$\mathrm{KL}(\pi^\mathrm{up}_i | \pi^\mathrm{up}_{i-1})$",
-            "e_r": "$\mathbb{E}(r_i)$",
+            "kl": r"$\mathrm{KL}(\pi^\mathrm{up}_i | \pi^\mathrm{up}_{i-1})$",
+            "e_r": r"$\mathbb{E}(r_i)$",
         }
         ax.set_ylabel(labels[metric])
         ax.set_xlabel("i / # iterations")
