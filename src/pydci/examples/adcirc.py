@@ -200,7 +200,7 @@ def plot_interval_lines(data, plot_intervals=None, ax=None):
     """
     time_col = 'ts' if 'ts' in data.columns else 'time'
     plot_intervals = [] if plot_intervals is None else plot_intervals
-    for name, args, intervals in plot_intervals:
+    for (name, args, intervals) in plot_intervals:
         for interval in intervals:
             args["label"] = None
             ax.axvline(data[time_col][interval[0]], **args)

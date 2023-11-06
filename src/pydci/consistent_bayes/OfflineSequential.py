@@ -53,7 +53,7 @@ from sklearn.preprocessing import StandardScaler  # type: ignore
 
 from pydci import PCAMUDProblem
 from pydci.log import disable_log, enable_log, log_table, logger
-from pydci.utils import KDEError, closest_factors, fit_domain, get_df, put_df, set_shape
+from pydci.utils import KDEError, closest_factors, fit_domain, get_df, put_df, set_shape, print_rich_table
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -104,6 +104,33 @@ class OfflineSequential(PCAMUDProblem):
         weights=None,
     ):
         self.init_prob(samples, data, std_dev, pi_in=pi_in, weights=weights)
+            
+    def __str__(self) -> str:
+        info_df = self.get_info_table()
+        return print_rich_table(
+            info_df,
+            columns=['num_samples', 'num_params', 'num_qoi', 'num_states', 'num_iter',
+                     'mem_usage', 'solved', 'lam_mud', 'mud_idx', 'e_r', 'kl', 'error'],
+            vertical=True,
+            title='OfflineSequential',
+        )
+    
+    @property
+    def n_iters(self):
+        """
+        Number of curent iterations
+        """
+        if self.states is None:
+            return 0
+        return self.states['iteration'].max()
+    
+    def get_info_table(self) -> pd.DataFrame:
+        """
+        Get Info Table
+        """
+        info_df = super().get_info_table()
+        info_df['num_iter'] = self.n_iters
+        return info_df
 
     def solve(
         self,
@@ -500,7 +527,7 @@ class OfflineSequential(PCAMUDProblem):
                 line_opts["alpha"] = alphas[i]
                 line_opts[
                     "label"
-                ] = f"$(\pi^\mathrm{{up}}_{{\lambda_{param_idx}}})_{{{i}}}$"
+                ] = f"$\pi^\mathrm{{up, {i+1}}}_{{\lambda_{param_idx}}}$"
                 line_opts["color"] = colors[i]
                 line_opts["linestyle"] = next(linecycler)
                 _, l = self.plot_L(
@@ -533,45 +560,6 @@ class OfflineSequential(PCAMUDProblem):
         )
         labels += l
         ax.legend(labels=labels, loc="upper right", fontsize=14)
-
-    #     def density_plots(
-    #         self,
-    #         lam_true=None,
-    #         lam_kwargs=None,
-    #         q_lam_kwargs=None,
-    #         axs=None,
-    #         figsize=(14, 6),
-    #     ):
-    #         """
-    #         Plot param and observable space onto sampe plot
-    #
-    #         TODO:
-    #             - Update this method
-    #         """
-    #         rasie NotImplementedError("This method is not implemented yet")
-    #         # if axs is None:
-    #     fig, axs = plt.subplots(1, 2, figsize=(14, 6))
-    # elif len(axs) != 2:
-    #     len(axs) != self.n_params
-    # lam_kwargs = {} if lam_kwargs is None else lam_kwargs
-    # q_lam_kwargs = {} if q_lam_kwargs is None else q_lam_kwargs
-    # lam_kwargs["ax"] = axs[0]
-    # lam_kwargs["nc"] = nc
-    # q_lam_kwargs["ax"] = axs[1]
-    # q_lam_kwargs["nc"] = nc
-    # self.plot_L(**lam_kwargs)
-    # self.plot_D(**q_lam_kwargs)
-    # lam_true = lam_kwargs.get("lam_true", None)
-    # fig = axs[0].get_figure()
-    # fig.suptitle(
-    #     self._parse_title(
-    #         result=self.result if nc is None else self.pca_results.loc[[nc]],
-    #         lam_true=lam_true,
-    #     )
-    # )
-    # fig.tight_layout()
-
-    # return axs
 
     def param_density_plots(
         self,
@@ -619,3 +607,117 @@ class OfflineSequential(PCAMUDProblem):
             title = f"# Splits = {num_splits}: " + title
 
         return title
+
+    def param_space_scatter_plots(
+        self,
+        type='qoi',
+        state_idx=0,
+        weighted=False,
+        same_colorbar=True
+    ):
+        """
+        Create scatter plots of the parameter space over iterations.
+
+        Parameters
+        ----------
+        type : str, optional
+            The type of plot to create, either 'qoi' for QoI or 'ratio' for update ratio, by default 'qoi'.
+        state_idx : int, optional
+            The index of the state to plot, by default 0.
+        weighted : bool, optional
+            Whether to plot the weighted update ratio, by default False.
+        same_colorbar : bool, optional
+            Whether to use the same colorbar for all subplots, by default True.
+
+        Returns
+        -------
+        None
+        """
+        base_size = 5
+        grid_plot = closest_factors(self.n_iters)
+        fig, axs = plt.subplots(
+            grid_plot[0],
+            grid_plot[1],
+            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
+            sharex=True,
+            sharey=True,
+        )
+
+        if type == 'qoi':
+            hue_col = f'q_pca_{state_idx}'
+        elif type == 'ratio':
+            hue_col = 'ratio' if not weighted else 'weighted_ratio'
+        else:
+            raise ValueError(f"Invalid type: {type}")
+
+        iteration = 0
+        iterations = self.states["iteration"].unique()
+        vmin = np.inf
+        vmax = -np.inf
+        if same_colorbar:
+            vmin = min([df[hue_col].min() for idx, df in self.states.groupby('iteration')])
+            vmax = max([df[hue_col].max() for idx, df in self.states.groupby('iteration')])
+            sm = plt.cm.ScalarMappable(
+                cmap="viridis",
+                norm=plt.Normalize(vmin=vmin, vmax=vmax),
+            )
+            sm._A = []
+        else:
+            vmin = np.inf
+            vmax = -np.inf
+
+            
+        for i, ax in enumerate(axs.flat):
+            df = self.states[self.states["iteration"] == iterations[i]]
+            
+            if not same_colorbar:
+                vmin = min(vmin, df[hue_col].min())
+                vmax = max(vmax, df[hue_col].max())
+                sm = plt.cm.ScalarMappable(
+                    cmap="viridis",
+                    norm=plt.Normalize(vmin=vmin, vmax=vmax),
+                )
+                sm._A = []
+            sns.scatterplot(
+                x=df["lam_0"],
+                y=df["lam_1"],
+                hue=df[hue_col],
+                palette="viridis",
+                ax=ax,
+                s=100,
+                hue_norm=plt.Normalize(vmin=vmin, vmax=vmax),   
+            )
+            ax.set_xlabel("$\lambda_0$")
+            ax.set_ylabel("$\lambda_1$")
+            ax.set_title(f"i = {i + 1}")
+            ax.get_legend().remove()
+            if not same_colorbar:
+                # Add colorbar
+                cbar_ax = fig.add_axes([ax.get_position().x1+0.01, ax.get_position().y0, 0.03, ax.get_position().height])
+                fig.colorbar(sm, cax=cbar_ax)
+
+                if type == 'qoi':
+                    title = rf'$q_{state_idx}^{i+1}(\mathbf{{\lambda}})$'
+                else:
+                    if weighted:
+                        title = rf'$r^{i+1}(\mathbf{{\lambda}})$'
+                    else:
+                        title = rf"$\prod_{{i=1}}^{i+1} r^{{i}}(\mathbf{{\lambda}})$"
+
+                cbar_ax.set_title(title)
+
+        if same_colorbar:
+            fig.subplots_adjust(right=0.85)
+            cbar_ax = fig.add_axes([0.9, 0.15, 0.03, 0.7])
+            fig.colorbar(sm, cax=cbar_ax)
+            if type == 'qoi':
+                title = rf'$q_{state_idx}^{{i}}(\mathbf{{\lambda}})$'
+            else:
+                if weighted:
+                    title = rf'$r^{i+1}(\mathbf{{\lambda}})$'
+                else:
+                    title = rf"$\prod_{{j=1}}^{{i}} r^{{j}}(\mathbf{{\lambda}})$"
+            cbar_ax.set_title(title)
+
+        fig.suptitle("Iterative Learned QoI" if type == 'qoi' else "Iterative Update Ratio")
+

@@ -104,8 +104,6 @@ class DCIProblem(object):
     doi: 10.1137/16M1087229.
     """
 
-    _print_opts = {'title': 'DCI Problem'}
-
     def __init__(
         self,
         samples,
@@ -137,19 +135,26 @@ class DCIProblem(object):
         return self.lam.shape[0]
 
     def __str__(self) -> str:
-
-        info_df = self.result.copy()
-        info_df['mem_usage'] = fmt_bytes(self.state.memory_usage(deep=True).sum() / 1024)
-        info_df['num_samples'] = self.n_samples
-        info_df['num_params'] = self.n_params
-        info_df['num_states'] = self.n_states
+        info_df = self.get_info_table()
         return print_rich_table(
             info_df,
             columns=['num_samples', 'num_params', 'num_states',
                      'mem_usage', 'solved', 'e_r', 'kl', 'error'],
             vertical=True,
-            **self._print_opts,
+            title='DCI Problem',
         )
+    
+    def get_info_table(self) -> pd.DataFrame:
+        """
+        Get Info Table
+        """
+        info_df = self.result.copy()
+        info_df['mem_usage'] = fmt_bytes(self.state.memory_usage(deep=True).sum() / 1024)
+        info_df['num_samples'] = self.n_samples
+        info_df['num_params'] = self.n_params
+        info_df['num_states'] = self.n_states
+
+        return info_df
 
     def init_prob(
         self,
@@ -695,8 +700,9 @@ class DCIProblem(object):
         state_col="q_lam",
         ratio_col="ratio",
         weight_col="weight",
-        plot_obs=True,
-        plot_pf=True,
+        pr_kwargs={},
+        obs_kwargs={},
+        pf_kwargs={},
         plot_legend=True,
         ax=None,
         figsize=(6, 6),
@@ -752,51 +758,61 @@ class DCIProblem(object):
         # deep_colors = sns.color_palette("deep", n_colors=number_parameters)
 
         # Plot predicted distribution
-        pr_label = rf"$\pi^{{pr}}_{{Q(\lambda)_{state_idx}}}$"
-        sns.kdeplot(
-            data=self.state,
-            x=f"{state_col}_{state_idx}",
-            ax=ax,
-            fill=True,
-            color=bright_colors[state_idx],
-            label=pr_label,
-            weights=self.state["weight"],
-        )
-        labels.append(pr_label)
-        if plot_pf:
-            pf_label = rf"$\pi^{{pf}}_{{Q(\lambda)_{state_idx}}}$"
-            sns.kdeplot(
+        if pr_kwargs is not None:
+            pr_args = dict(
                 data=self.state,
                 x=f"{state_col}_{state_idx}",
                 ax=ax,
                 fill=True,
                 color=bright_colors[state_idx],
                 linestyle=":",
-                label=pf_label,
-                weights=self.state["weight"] * self.state[ratio_col],
+                label=rf"$\pi^{{pr}}_{{Q(\lambda)_{state_idx}}}$",
+                weights=self.state["weight"],
             )
-            labels.append(pf_label)
-
-        # TODO: How to plot this using SNS?
-        if plot_obs:
-            obs_label = r"$\pi^{{obs}}_{{Q(\lambda)}}$"
+            pr_args.update(pr_kwargs)
+            sns.kdeplot(**pr_args)
+            labels.append(pr_args['label'])
+        
+        if obs_kwargs is not None:
+            # TODO: Check this
+            obs_label = rf"$\pi^{{obs}}_{{\lambda_{state_idx}}}$"
+            obs_args = dict(
+                color="r",
+                label=obs_label,
+            )
             obs_domain = ax.get_xlim()
             obs_x = np.linspace(obs_domain[0], obs_domain[1], 10000)
             obs_x_marginal = np.zeros((len(obs_x), self.n_states))
             obs_x_marginal[:, state_idx] = obs_x
             obs = self.pi_obs(values=obs_x_marginal)
-            ax.plot(obs_x, obs, color="r", label=obs_label)
-            labels.append(obs_label)
+            obs_args.update(obs_kwargs)
+            ax.plot(obs_x, obs, **obs_kwargs)
+            sns.kdeplot(**obs_args)
+            labels.append(obs_args["label"])
 
-        # Set plot specifications
-        ax.set_xlabel(r"$\mathcal{D}$")
+        if pf_kwargs is not None:
+            pf_label = rf"$\pi^{{pf}}_{{\lambda_{state_idx}}}$"
+            pf_args = dict(
+                data=df,
+                x=f"{state_col}_{state_idx}",
+                ax=ax,
+                fill=True,
+                color=bright_colors[state_idx],
+                label=pf_label,
+                linestyle="-",
+                weights=df[weight_col] * df[ratio_col],
+            )
+            pf_args.update(pf_kwargs)
+            sns.kdeplot(**pf_args)
+            labels.append(pf_args["label"])
+
+        ax.set_xlabel(fr"${{\mathbf{{q}}_{state_idx}}}$")
         if plot_legend:
             ax.legend(
                 labels=labels,
                 fontsize=12,
                 title_fontsize=12,
             )
-        # plt.tight_layout()
 
         return ax, labels
 
@@ -859,22 +875,42 @@ class DCIProblem(object):
 
     def density_plots(
         self,
+        param_idx=0,
+        state_idx=0,
+        lam_true=None,
+        lam_kwargs=None,
+        q_lam_kwargs=None,
+        axs=None,
         figsize=(14, 6),
     ):
         """
         Plot param and observable space onto sampe plot
         """
-        fig, axs = plt.subplots(1, 2, figsize=(14, 6))
-        self.plot_L(ax=axs[0])
-        self.plot_D(ax=axs[1])
-        fig.suptitle(self._parse_title())
-        fig.tight_layout()
+        if axs is None:
+            fig, axs = plt.subplots(1, 2, figsize=figsize)
+        elif len(axs) != 2:
+            len(axs) != self.n_params
+        lam_kwargs = {} if lam_kwargs is None else lam_kwargs
+        q_lam_kwargs = {} if q_lam_kwargs is None else q_lam_kwargs
+        lam_kwargs["param_idx"] = param_idx
+        lam_kwargs["ax"] = axs[0]
+        q_lam_kwargs["ax"] = axs[1]
+        q_lam_kwargs["state_idx"] = state_idx
+        self.plot_L(**lam_kwargs)
+        self.plot_D(**q_lam_kwargs)
+        lam_true = lam_kwargs.get("lam_true", None)
+        fig = axs[0].get_figure()
+        fig.suptitle(
+            self._parse_title(
+                result=self.result,
+                lam_true=lam_true,
+            )
+        )
 
         return axs
 
     def param_density_plots(
         self,
-        lam_true=None,
         base_size=4,
         max_np=8,
         figsize=(14, 6),
@@ -892,16 +928,40 @@ class DCIProblem(object):
             else figsize,
         )
 
-        lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
         lam_kwargs = {} if lam_kwargs is None else lam_kwargs
         for i, ax in enumerate(ax.flat):
             plot_args = dict(param_idx=i, lam_true=lam_true, ax=ax)
-            if i in lam_kwargs.keys():
-                plot_args.update(lam_kwargs[i])
+            plot_args.update(lam_kwargs)
             self.plot_L(**plot_args)
 
-        fig.suptitle(self._parse_title(lam_true=lam_true))
-        fig.tight_layout()
+        fig.suptitle(self._parse_title())
+
+    def state_density_plots(
+        self,
+        base_size=4,
+        max_ns=8,
+        figsize=(14, 6),
+        q_lam_kwargs=None,
+    ):
+        # TODO: Add explicit figsize argument.
+        base_size = 4
+        n_states = self.n_states if self.n_states <= max_ns else max_ns
+        grid_plot = closest_factors(n_states)
+        fig, ax = plt.subplots(
+            grid_plot[0],
+            grid_plot[1],
+            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size)
+            if figsize is None
+            else figsize,
+        )
+
+        q_lam_kwargs = {} if q_lam_kwargs is None else q_lam_kwargs
+        for i, ax in enumerate(ax.flat):
+            plot_args = dict(state_idx=i, ax=ax)
+            plot_args.update(q_lam_kwargs)
+            self.plot_D(**plot_args)
+
+        fig.suptitle(self._parse_title())
 
     def _parse_title(
         self,

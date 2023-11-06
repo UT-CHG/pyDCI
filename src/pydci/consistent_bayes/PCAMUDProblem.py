@@ -53,7 +53,8 @@ from sklearn.preprocessing import StandardScaler  # type: ignore
 
 from pydci.consistent_bayes.MUDProblem import MUDProblem
 from pydci.log import disable_log, enable_log, log_table, logger
-from pydci.utils import KDEError, closest_factors, fit_domain, get_df, put_df, set_shape
+from pydci.utils import (KDEError, closest_factors, fit_domain,
+                         get_df, put_df, set_shape, print_rich_table)
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -104,6 +105,25 @@ class PCAMUDProblem(MUDProblem):
         weights=None,
     ):
         self.init_prob(samples, data, std_dev, pi_in=pi_in, weights=weights)
+    
+    def __str__(self) -> str:
+        info_df = self.get_info_table()
+        return print_rich_table(
+            info_df,
+            columns=['num_samples', 'num_params', 'num_qoi', 'num_states',
+                     'mem_usage', 'solved', 'lam_mud', 'mud_idx', 'e_r', 'kl', 'error'],
+            vertical=True,
+            title='PCAMUDProblem',
+        )
+    
+    def get_info_table(self) -> pd.DataFrame:
+        """
+        Get Info Table
+        """
+        info_df = super().get_info_table()
+        info_df['num_qoi'] = str(self.n_qoi)
+
+        return info_df
 
     @property
     def n_qoi(self):
@@ -279,8 +299,9 @@ class PCAMUDProblem(MUDProblem):
         state_col="q_pca",
         ratio_col="ratio",
         weight_col="weight",
-        plot_obs=True,
-        plot_pf=True,
+        pr_kwargs={},
+        obs_kwargs={},
+        pf_kwargs={},
         plot_legend=True,
         ax=None,
         figsize=(6, 6),
@@ -321,89 +342,126 @@ class PCAMUDProblem(MUDProblem):
             state_col=state_col,
             ratio_col=ratio_col,
             weight_col=weight_col,
-            plot_obs=False,
-            plot_pf=plot_pf,
-            plot_legend=plot_legend,
+            pr_kwargs=pr_kwargs,
+            obs_kwargs=None,
+            pf_kwargs=pf_kwargs,
+            plot_legend=False if obs_kwargs is not None else plot_legend,
             ax=ax,
             figsize=figsize,
         )
 
-        if plot_obs:
+        if obs_kwargs is not None:
             # Plot N(0, 1) distribution over axis range using seaborn
             x = np.linspace(*ax.get_xlim(), 100)
             y = norm.pdf(x, loc=0, scale=1)
-            sns.lineplot(
+            obs_args = dict(
                 x=x,
                 y=y,
                 ax=ax,
+                color='r',
                 label="$\pi^\mathrm{obs}_\mathcal{D} = \mathcal{N}(0, 1)$",
+            )
+            obs_args.update(obs_kwargs)
+            ax = sns.lineplot(
+                **obs_args
+            )
+            labels.append(obs_args["label"])
+        
+        # Set plot specifications
+        ax.set_xlabel(fr"$\mathbf{{q}}_{state_idx}$")
+        if plot_legend:
+            ax.legend(
+                labels=labels,
+                fontsize=12,
+                title_fontsize=12,
             )
 
         return ax, labels
 
-    def density_plots(
+    def param_space_scatter_plot(
         self,
-        nc=None,
-        lam_true=None,
-        lam_kwargs=None,
-        q_lam_kwargs=None,
-        axs=None,
-        figsize=(14, 6),
-    ):
-        """
-        Plot param and observable space onto sampe plot
-        """
-        if axs is None:
-            fig, axs = plt.subplots(1, 2, figsize=(14, 6))
-        elif len(axs) != 2:
-            len(axs) != self.n_params
-        lam_kwargs = {} if lam_kwargs is None else lam_kwargs
-        q_lam_kwargs = {} if q_lam_kwargs is None else q_lam_kwargs
-        lam_kwargs["ax"] = axs[0]
-        q_lam_kwargs["ax"] = axs[1]
-        self.plot_L(**lam_kwargs)
-        self.plot_D(**q_lam_kwargs)
-        lam_true = lam_kwargs.get("lam_true", None)
-        fig = axs[0].get_figure()
-        fig.suptitle(
-            self._parse_title(
-                result=self.result,
-                lam_true=lam_true,
-            )
-        )
-        fig.tight_layout()
-
-        return axs
-
-    def param_density_plots(
-        self,
-        lam_true=None,
-        base_size=4,
-        max_np=9,
+        param_x=0,
+        param_y=1,
+        type='qoi',
+        state_idx=0,
+        weighted=False,
+        figsize=(6,6),
+        ax=None,
         **kwargs,
     ):
-        base_size = 4
-        n_params = self.n_params if self.n_params <= max_np else max_np
-        grid_plot = closest_factors(n_params)
-        fig, ax = plt.subplots(
-            grid_plot[0],
-            grid_plot[1],
-            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
-        )
+        """
+        Create scatter plots of the parameter space, contoured by learned QoI or update ratio.
 
-        lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
-        for i, ax in enumerate(ax.flat):
-            self.plot_L(param_idx=i, lam_true=lam_true, ax=ax, **kwargs)
-            ax.set_title(f"$\lambda_{{{i}}}$")
+        Parameters
+        ----------
+        pca_it : PCAMUDProblem
+            The problem object
+        type : str, optional
+            The type of plot to create, either 'qoi' for QoI or 'ratio' for update ratio, by default 'qoi'.
+        state_idx : int, optional
+            The index of the state to plot, by default 0.
+        weighted : bool, optional
+            Whether to plot the weighted update ratio, by default False.
 
-        fig.suptitle(
-            self._parse_title(
-                result=self.result,
-                nc=True,
-                lam_true=lam_true,
-            )
+        Returns
+        -------
+        None
+        """
+        if ax is None:
+            fig, ax = plt.subplots(1, 1, figsize=figsize)
+
+        if type == 'qoi':
+            hue_col = f'q_pca_{state_idx}'
+        elif type == 'ratio':
+            hue_col = 'ratio' if not weighted else 'weighted_ratio'
+        else:
+            raise ValueError(f"Invalid type: {type}")
+
+        vmin = self.state[hue_col].min()
+        vmax = self.state[hue_col].max()
+        sm = plt.cm.ScalarMappable(
+            cmap="viridis",
+            norm=plt.Normalize(vmin=vmin, vmax=vmax),
         )
-        fig.tight_layout()
+        sm._A = []
+
+        plot_args = dict(
+            x=self.state[f"lam_{param_x}"],
+            y=self.state[f"lam_{param_y}"],
+            hue=self.state[hue_col],
+            palette="viridis",
+            ax=ax,
+            s=100,
+            hue_norm=plt.Normalize(vmin=vmin, vmax=vmax),
+        )
+        plot_args.update(kwargs)
+
+        sns.scatterplot(**plot_args)
+        ax.set_xlabel(f"$\lambda_{param_x}$")
+        ax.set_ylabel(f"$\lambda_{param_y}$")
+        ax.set_title("Learned QoI" if type == 'qoi' else "Update Ratio")
+        ax.get_legend().remove()
+
+        # Add colorbar
+        fig = plt.gcf()
+        cbar_ax = fig.add_axes([
+            ax.get_position().x1+0.01,
+            ax.get_position().y0,
+            0.03, ax.get_position().height])
+        fig.colorbar(sm, cax=cbar_ax)
+
+        if type == 'qoi':
+            title = rf'$q_{state_idx}(\mathbf{{\lambda}})$'
+            if type == 'qoi':
+                title = rf'$q_{state_idx}(\mathbf{{\lambda}})$'
+        else:
+            if weighted:
+                title = rf'$w*r(\mathbf{{\lambda}})$'
+            else:
+                title = rf"$r(\mathbf{{\lambda}})$"
+        cbar_ax.set_title(title)
+
+        return ax
 
     def learned_qoi_plot(self, nc_mask=None):
         """
@@ -429,3 +487,69 @@ class PCAMUDProblem(MUDProblem):
         title = super()._parse_title(result=result, lam_true=lam_true)
 
         return title
+
+#     def density_plots(
+#         self,
+#         param_idx=0,
+#         state_idx=0,
+#         lam_true=None,
+#         lam_kwargs=None,
+#         q_lam_kwargs=None,
+#         axs=None,
+#         figsize=(14, 6),
+#     ):
+#         """
+#         Plot param and observable space onto sampe plot
+#         """
+#         if axs is None:
+#             fig, axs = plt.subplots(1, 2, figsize=(14, 6))
+#         elif len(axs) != 2:
+#             len(axs) != self.n_params
+#         lam_kwargs = {} if lam_kwargs is None else lam_kwargs
+#         q_lam_kwargs = {} if q_lam_kwargs is None else q_lam_kwargs
+#         lam_kwargs["param_idx"] = param_idx
+#         lam_kwargs["ax"] = axs[0]
+#         q_lam_kwargs["ax"] = axs[1]
+#         q_lam_kwargs["state_idx"] = state_idx
+#         self.plot_L(**lam_kwargs)
+#         self.plot_D(**q_lam_kwargs)
+#         lam_true = lam_kwargs.get("lam_true", None)
+#         fig = axs[0].get_figure()
+#         fig.suptitle(
+#             self._parse_title(
+#                 result=self.result,
+#                 lam_true=lam_true,
+#             )
+#         )
+#         # fig.tight_layout()
+# 
+#         return axs
+# 
+#    def param_density_plots(
+#        self,
+#        lam_true=None,
+#        base_size=4,
+#        max_np=9,
+#        **kwargs,
+#    ):
+#        base_size = 4
+#        n_params = self.n_params if self.n_params <= max_np else max_np
+#        grid_plot = closest_factors(n_params)
+#        fig, ax = plt.subplots(
+#            grid_plot[0],
+#            grid_plot[1],
+#            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
+#        )
+#
+#        lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
+#        for i, ax in enumerate(ax.flat):
+#            self.plot_L(param_idx=i, lam_true=lam_true, ax=ax, **kwargs)
+#            ax.set_title(f"$\lambda_{{{i}}}$")
+#
+#        fig.suptitle(
+#            self._parse_title(
+#                result=self.result,
+#                lam_true=lam_true,
+#            )
+#        )
+#        # fig.tight_layout()

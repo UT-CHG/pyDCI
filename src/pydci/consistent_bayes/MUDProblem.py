@@ -35,7 +35,7 @@ from scipy.stats import distributions as dist  # type: ignore
 
 from pydci import DCIProblem
 from pydci.log import log_table, logger
-from pydci.utils import get_df, put_df, set_shape, print_rich_table
+from pydci.utils import get_df, put_df, set_shape, print_rich_table, closest_factors
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -114,6 +114,26 @@ class MUDProblem(DCIProblem):
         weights=None,
     ):
         self.init_prob(samples, data, std_dev, pi_in=pi_in, pi_pr=pi_pr, weights=weights)
+    
+    def __str__(self) -> str:
+        info_df = self.get_info_table()
+        return print_rich_table(
+            info_df,
+            columns=['num_samples', 'num_params', 'num_states',
+                     'mem_usage', 'solved', 'lam_mud', 'mud_idx', 'e_r', 'kl', 'error'],
+            vertical=True,
+            title='MUDProblem',
+        )
+    
+    def get_info_table(self) -> pd.DataFrame:
+        """
+        Get Info Table
+        """
+        info_df = super().get_info_table()
+        info_df['lam_mud'] = str(self.mud_point)
+        info_df['mud_idx'] = str(self.mud_arg)
+
+        return info_df
 
     def init_prob(self, samples, data, std_dev, pi_in=None, pi_pr=None, weights=None):
         """
@@ -138,6 +158,7 @@ class MUDProblem(DCIProblem):
         pi_obs = dist.norm(loc=np.mean(data), scale=std_dev)
         super().init_prob(samples, pi_obs, pi_in=pi_in, pi_pr=pi_pr, weights=weights)
         self.mud_point = None
+        self.mud_arg = None
 
     def solve(self):
         """
@@ -293,6 +314,7 @@ class MUDProblem(DCIProblem):
 
         # Generate vertical lines for true values
         if lam_true is not None:
+            lam_true = np.reshape(lam_true, (1, -1))
             lam_true_label = (
                 f"$\lambda^{{\dagger}}_{param_idx} = "
                 + f"{lam_true[0][param_idx]:.4f}$"
@@ -313,29 +335,35 @@ class MUDProblem(DCIProblem):
             )
 
         return ax, labels
-
-    def density_plots(
+    
+    def param_density_plots(
         self,
         lam_true=None,
-        lam_kwargs=None,
-        q_lam_kwargs=None,
+        base_size=4,
+        max_np=8,
         figsize=(14, 6),
+        lam_kwargs=None,
     ):
-        """
-        Plot param and observable space onto sampe plot
-        """
-        fig, axs = plt.subplots(1, 2, figsize=(14, 6))
-        lam_kwargs = {} if lam_kwargs is None else lam_kwargs
-        q_lam_kwargs = {} if q_lam_kwargs is None else q_lam_kwargs
-        lam_kwargs["ax"] = axs[0]
-        q_lam_kwargs["ax"] = axs[1]
-        self.plot_L(**lam_kwargs)
-        self.plot_D(**q_lam_kwargs)
-        lam_true = lam_kwargs.get("lam_true", None)
-        fig.suptitle(self._parse_title(lam_true=lam_true))
-        fig.tight_layout()
+        # TODO: Add explicit figsize argument.
+        base_size = 4
+        n_params = self.n_params if self.n_params <= max_np else max_np
+        grid_plot = closest_factors(n_params)
+        fig, ax = plt.subplots(
+            grid_plot[0],
+            grid_plot[1],
+            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size)
+            if figsize is None
+            else figsize,
+        )
 
-        return axs
+        lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
+        lam_kwargs = {} if lam_kwargs is None else lam_kwargs
+        for i, ax in enumerate(ax.flat):
+            plot_args = dict(param_idx=i, lam_true=lam_true, ax=ax)
+            plot_args.update(lam_kwargs)
+            self.plot_L(**plot_args)
+
+        fig.suptitle(self._parse_title(lam_true=lam_true))
 
     def _parse_title(
         self,
