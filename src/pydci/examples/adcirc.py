@@ -9,7 +9,7 @@ import pandas as pd
 import seaborn as sns
 from alive_progress import alive_bar
 
-from pydci import PCAMUDProblem
+from pydci import PCAMUDProblem, OfflineSequential
 from pydci.log import disable_log, enable_log, logger
 from pydci.utils import add_noise, get_df, put_df
 
@@ -129,6 +129,7 @@ def plot_state(data, samples=None, mask=None, plot_intervals=None, ax=None):
         marker="*",
         label="Observed",
         ax=ax,
+        s=100,
     )
 
     if samples is not None:
@@ -265,7 +266,7 @@ def plot_iterations(prob, max_plot=10, plot_idxs=None, lam_true=None):
 def process_result(prob, lam_true, times):
     """
     Further processes ther result of an iterative PCAMUDProblem,
-    that is solved by `solve_it`, by doing the following:
+    that is solved by `solve`, by doing the following:
 
     1. Calculating l2_err according to true value passed in
     2. Calculating state error, where state here is defined as
@@ -274,15 +275,15 @@ def process_result(prob, lam_true, times):
     """
 
     # Calculate L2 error and Covariance for each
-    res = prob.it_results.copy()
-    mud_points = get_df(prob.it_results, "lam_MUD", 2)
+    res = pd.concat(prob.results).copy()
+    mud_points = get_df(res, "lam_MUD", 2)
     l2_errs = np.linalg.norm(mud_points - lam_true, axis=1)
     l2_errs = np.linalg.norm(mud_points - lam_true, axis=1)
     covs = []
     res["l2_err"] = l2_errs
 
     mud_states = get_df(
-        prob.state.iloc[prob.it_results["MUD_idx"].values], "q_lam", prob.n_qoi
+        prob.state.iloc[res["MUD_idx"].values], "q_lam", prob.n_qoi
     )
     res["state_err"] = np.linalg.norm((mud_states.T - prob.data).T, axis=1)
 
@@ -356,8 +357,8 @@ def iterative_trials(
                 std_dev=std_dev,
                 num_samples=num_samples,
             )
-            pca = PCAMUDProblem(ret["samples"], ret["data"], std_dev)
-            pca.solve_it(
+            pca = OfflineSequential(ret["samples"], ret["data"], std_dev)
+            pca.solve(
                 pca_mask=mask,
                 pca_splits=num_splits,
                 pca_components=pca_components,
@@ -434,8 +435,8 @@ def fixed_trials(
                 range(mask[0], x[-1]) for x in np.array_split(mask, num_splits)
             ]
             for interval in intervals:
-                pca = PCAMUDProblem(ret["samples"], ret["data"], std_dev)
-                pca.solve_it(
+                pca = OfflineSequential(ret["samples"], ret["data"], std_dev)
+                pca.solve(
                     pca_mask=interval,
                     pca_splits=1,
                     pca_components=pca_components,

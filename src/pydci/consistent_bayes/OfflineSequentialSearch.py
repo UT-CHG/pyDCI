@@ -26,11 +26,6 @@ doi: 10.1137/16M1087229.
 
 TODO List:
 
-    - Mud point for inherited classes not being plotted correctly
-    - Sequential (should be renamed split sequential?) - Plot destribution
-    methods for plotting distributions per iteration, qoi combinations,
-    or pca values
-    Dynamic Problem -> Finish
 
 """
 import math

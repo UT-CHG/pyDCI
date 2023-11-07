@@ -324,13 +324,14 @@ def get_search_combinations(
         {
             "exp_thresh": exp_thresh,
             "pca_components": i,
-            "pca_mask": range(j),
+            "pca_mask": range(j) if isinstance(j, int) else j,
             "pca_splits": k,
         }
         for i in pca_range
         for j in mask_range
         for k in split_range
-        if j / (k * data_chunk_size) >= 1.0
+        if (j if isinstance(j, int) else len(j)) /
+        (k * data_chunk_size) >= 1.0
     ]
 
     if len(search_list) > max_num_combs:
