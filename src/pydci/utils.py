@@ -17,6 +17,8 @@ from rich.text import Text
 from rich.console import Console
 import io
 
+from pydci.log import logger
+
 
 class KDEError(Exception):
     def __init__(
@@ -293,6 +295,15 @@ def get_search_combinations(
     By default uses the last data chunk in the data list.
 
     """
+
+    logger.debug(''.join([
+        f'Search config inputs:\n'
+        f'data_chunk_size: {data_chunk_size}\n',
+        f'n_data: {pca_range}\n',
+        f'mask_range: {mask_range}\n',
+        f'split_range: {split_range}\n',
+        ]))
+
     if data_chunk_size is None:
         data_chunk_size = n_params if n_params <= n_data else n_data
         if int(n_data / data_chunk_size) > 10:
@@ -319,6 +330,15 @@ def get_search_combinations(
     # * 3. # Splits : 1 -> (# data/# data_chunk_size). Splits of data_chunk_size.
     if split_range is None:
         split_range = range(1, int(n_data / data_chunk_size) + 1)
+
+    logger.debug(''.join([
+        f'Search config after defaults:\n'
+        f'data_chunk_size: {data_chunk_size}\n',
+        f'n_data: {pca_range}\n',
+        f'mask_range: {mask_range}\n',
+        f'split_range: {split_range}\n',
+        ]))
+
 
     search_list = [
         {

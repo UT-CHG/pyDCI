@@ -45,6 +45,10 @@ from pydci.utils import (
     print_rich_table,
     fmt_bytes,
 )
+from pydci.notation import(
+    exp_ratio_str,
+    kl_str,
+)
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -903,7 +907,6 @@ class DCIProblem(object):
         fig.suptitle(
             self._parse_title(
                 result=self.result,
-                lam_true=lam_true,
             )
         )
 
@@ -973,6 +976,10 @@ class DCIProblem(object):
         result = self.result if result is None else result
         kl = result["kl"].values[0]
         e_r = result["e_r"].values[0]
-        title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{D}}_{{KL}}$= {kl:.3f}"
+        # title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{KL}}_{{DCI}}$= {kl:.3f}"
+        title = ', '.join(
+            [exp_ratio_str(e_r, format_spec=".3f"),
+             kl_str(kl, format_spec=".3f")])
 
         return title
+        

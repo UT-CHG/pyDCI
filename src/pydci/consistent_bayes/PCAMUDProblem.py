@@ -384,6 +384,7 @@ class PCAMUDProblem(MUDProblem):
         param_y=1,
         type='qoi',
         state_idx=0,
+        cb_range=None,
         weighted=False,
         figsize=(6,6),
         ax=None,
@@ -394,14 +395,20 @@ class PCAMUDProblem(MUDProblem):
 
         Parameters
         ----------
-        pca_it : PCAMUDProblem
-            The problem object
+        param_x : int, optional
+            The index of the parameter to plot on the x-axis, by default 0.
+        param_y : int, optional
+            The index of the parameter to plot on the y-axis, by default 1.
         type : str, optional
             The type of plot to create, either 'qoi' for QoI or 'ratio' for update ratio, by default 'qoi'.
         state_idx : int, optional
             The index of the state to plot, by default 0.
         weighted : bool, optional
             Whether to plot the weighted update ratio, by default False.
+        figsize : tuple, optional
+            The figure size, by default (6,6).
+        ax : matplotlib.axes, optional  
+            The axis to plot on, by default None.
 
         Returns
         -------
@@ -417,8 +424,11 @@ class PCAMUDProblem(MUDProblem):
         else:
             raise ValueError(f"Invalid type: {type}")
 
-        vmin = self.state[hue_col].min()
-        vmax = self.state[hue_col].max()
+        if cbar_range is not None:
+            vmin, vmax = cbar_range
+        else:
+            vmin = self.state[hue_col].min()
+            vmax = self.state[hue_col].max()
         sm = plt.cm.ScalarMappable(
             cmap="viridis",
             norm=plt.Normalize(vmin=vmin, vmax=vmax),
