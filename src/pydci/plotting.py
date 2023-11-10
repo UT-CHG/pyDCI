@@ -1,11 +1,48 @@
-import pdb
-import random
+"""
+pyDCI plotting functions
 
-import matplotlib.pyplot as plt
-import numpy as np
+TODO:
+ - Reconcile plotting functions here with ones in the classes
+"""
+
+# System imports
+import random
+from pathlib import Path
+import importlib
+
+# Math imports
 import pandas as pd
+import numpy as np
+import random
+from scipy.stats import uniform
+from pandas import DataFrame
+
+# Plotting imports
 import seaborn as sns
+from typing import List, Dict, Any, Optional, Union, Tuple, Callable, Sequence, Iterable
+import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
+from matplotlib.patches import FancyBboxPatch
+import matplotlib.ticker as mticker
+import matplotlib.lines as mlines
+from matplotlib.legend import Legend
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
+from matplotlib.figure import Figure
+from matplotlib import ticker
 from matplotlib.patches import Rectangle
+from datetime import timedelta
+from matplotlib.dates import HourLocator, DateFormatter
+
+import matplotlib.axes._axes as axes
+from enum import Enum, auto
+from typing import List, Tuple, Dict, Any, Optional
+import pandas as pd
+from matplotlib.axes import Axes
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
+import matplotlib.pyplot as Axes
+
 
 sns.set_style("darkgrid")  # set the default seaborn style for our plots
 
@@ -481,3 +518,248 @@ def state_scatter_plot(
         data=df,
         label="State",
     )
+
+
+def add_plot_settings(
+    ax: Axes, 
+    title: str, 
+    label_pads: List[int],
+    x_lim: List[int],
+    y_lim: List[int], 
+    label_sizes: List[int],
+    loc: List[float], 
+    axis_labels: List[str], 
+     tick_label_size: int,
+    title_pad: int, 
+    title_font_size: int
+) -> None:
+    """
+    Configures the plot settings for the provided Axes object, including the title,
+    tick locator intervals, label padding, axis labels, and tick label size.
+
+    Parameters
+    ----------
+    ax : Axes
+        The Axes object to apply settings to.
+    title : str
+        The title of the plot.
+    x_lim : List[int]
+        A list containing the x-axis limits.
+    y_lim : List[int] 
+        A list containing the y-axis limits.
+    label_pads : List[int]
+        A list containing the padding for the x-axis and y-axis labels.
+    label_sizes : List[int]
+        A list containing the font sizes for the x-axis and y-axis labels.
+    loc : List[float]
+        A list containing the locator interval for the x-axis and y-axis.
+    axis_labels : List[str]
+        A list containing the labels for the x-axis and y-axis.
+    tick_label_size : int
+        The font size for the tick labels.
+    title_pad : int
+        The padding for the plot title.
+    title_font_size : int
+
+    Returns
+    -------
+    None
+
+    """
+        
+    ax.set_xlim(*x_lim) if x_lim is not None else None
+    ax.set_ylim(*y_lim) if y_lim is not None else None
+
+        
+    ax.xaxis.set_major_locator(mticker.MultipleLocator(loc[0])) if loc[0] is not None else None
+    ax.yaxis.set_major_locator(mticker.MultipleLocator(loc[1])) if loc[1] is not None else None
+    
+    ax.tick_params(axis='x', labelsize=tick_label_size)
+    ax.tick_params(axis='y', labelsize=tick_label_size)
+    
+    for label in ax.get_xticklabels() + ax.get_yticklabels():
+        label.set_fontweight('bold')
+
+    ax.xaxis.labelpad = label_pads[0]
+    ax.yaxis.labelpad = label_pads[1]
+    
+    ax.set_xlabel(axis_labels[0], fontsize=label_sizes[0], fontweight='bold')
+    ax.set_ylabel(axis_labels[1], fontsize=label_sizes[1], fontweight='bold')
+    
+    if title is not None:
+        ax.set_title(title, fontsize=title_font_size, fontweight='bold', pad=title_pad)
+
+
+def plot_interval_lines(data: pd.DataFrame, 
+                        plot_intervals: Optional[List[Tuple[str, Dict[str, Any], List[Tuple[int, int]]]]] = None, 
+                        ax: Optional[plt.Axes] = None) -> plt.Axes:
+    """
+    Plots vertical lines on an Axes at the intervals specified in the data.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame
+        A pandas DataFrame containing the data to be plotted. Must contain a time column.
+    plot_intervals : Optional[List[Tuple[str, Dict[str, Any], List[Tuple[int, int]]]]], optional
+        A list of tuples where each tuple contains a label string, a dictionary of arguments to 
+        pass to axvline, and a list of tuples, each of which represents an interval with start and 
+        end indexes in the time column. By default, it is None, which means no intervals are plotted.
+    ax : Optional[matplotlib.pyplot.Axes], optional
+        The matplotlib Axes object where the lines will be plotted. If None, it will be created.
+
+    Returns
+    -------
+    matplotlib.pyplot.Axes
+        The matplotlib Axes object with the interval lines plotted.
+
+    """
+    if ax is None:
+        ax = plt.gca()
+
+    time_col = 'ts' if 'ts' in data.columns else 'time'
+    plot_intervals = plot_intervals or []
+
+    for _, args, intervals in plot_intervals:
+        for interval in intervals:
+            args["label"] = None
+            ax.axvline(data[time_col][interval[0]], linewidth=1, c="darkgoldenrod", zorder=1, **args)
+        args["label"] = "Intervals"
+        ax.axvline(data[time_col][intervals[-1][-1]], linewidth=1, c="darkgoldenrod", zorder=1, **args)
+    
+    return ax
+
+
+def create_legend(ax: Axes,
+                  colors: List[str],
+                  styles: List[str],
+                  labels: List[str],
+                  location: str = 'upper left',
+                  font_size: int = 30,
+                  line_width: int = 8
+                  ) -> None:
+    """
+    Creates a custom legend for the given Axes object with specified colors,
+    line styles, and labels.
+
+    Parameters
+    ----------
+    ax : maxes.Axes
+        The Axes object to which the legend will be added.
+    colors : List[str]
+        A list of color specifications for the legend lines.
+    styles : List[str]
+        A list of line styles for the legend lines.
+    labels : List[str]
+        A list of label strings for the legend entries.
+    location : str, optional
+        The location of the legend on the Axes. Defaults to 'upper left'.
+    font_size : int, optional
+        The font size of the legend labels. Defaults to 30.
+    line_width : int, optional
+        The line width of the legend lines. Defaults to 8.
+    Returns
+    -------
+    None
+
+    """
+    # Create Line2D objects for the legend.
+    line_handles = [mlines.Line2D([], [], color=color, linestyle=style) 
+                    for color, style in zip(colors, styles)]
+
+
+    # Create the legend on the Axes.
+    legend = ax.legend(handles=line_handles, labels=labels, handlelength=1.8,
+                       loc=location, frameon=True)
+
+
+    # Set line properties in the legend.
+    for idx, (line,  text, color) in enumerate(zip(legend.get_lines(), legend.get_texts(),colors)):
+
+        
+        if line.get_linestyle() == "None":
+            line.set_marker('.')
+            line.set_markersize(25)
+            line.set_linewidth(0)   
+        else:
+            line.set_linewidth(line_width)
+            
+        line.set_color(color)  # Set the color dynamically.
+        text.set_fontsize(font_size)
+        text.set_fontweight('bold')
+
+    # Directly set the linestyle for the specific line if it's known.
+    legend.get_lines()[-1].set_linestyle(styles[-1])
+
+
+def create_colorbar(
+    ax: Axes,
+    data: pd.Series,
+    label: str,
+    pad: float = 0.025,
+    label_size: int = 14,
+    label_pad: int = 42,
+    width: int = 0,
+    length: int = 0,
+    direction: str = "inout",
+    y: float = 1.07,
+    rotation: int = 0,
+    font_size: int = 20,
+) -> None:
+    """
+    Create a colorbar for a given axes object.
+
+    Parameters
+    ----------
+    ax : Axes
+        The axes object to which the colorbar will be added.
+    data : pd.Series
+        The data to be used for the colorbar.
+    label : str
+        The label for the colorbar.
+    pad : float, optional
+        The padding between the colorbar and the axes, by default 0.025
+    label_size : int, optional
+        The font size of the colorbar label, by default 14
+    label_pad : int, optional
+        The padding between the colorbar and its label, by default 42
+    width : int, optional
+        The width of the colorbar ticks, by default 0
+    length : int, optional
+        The length of the colorbar ticks, by default 0
+    direction : str, optional
+        The direction of the colorbar ticks, by default "inout"
+    y : float, optional
+        The y-coordinate of the colorbar, by default 1.07
+    rotation : int, optional
+        The rotation of the colorbar label, by default 0
+    font_size : int, optional
+        The font size of the colorbar ticks, by default 20
+
+    Returns
+    -------
+    None
+    """
+    # Set colormap to viridis and normalize based on data
+    norm = Normalize(data.min(), data.max())
+    cmap = plt.cm.viridis
+    sm = ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = ax.figure.colorbar(sm, ax=ax, pad=pad)
+    cbar.ax.tick_params(
+        labelsize=label_size, width=width, length=length, direction=direction
+    )
+    cbar.set_label(
+        label=label, size=label_size, weight="bold", labelpad=label_pad, y=y, rotation=rotation
+    )
+    # cbar.ax.tick_params(labelsize=font_size)
+
+def format_time_xlabel(ax, start_time, end_time):
+    if (end_time - start_time) <= timedelta(days=1):
+        ax.xaxis.set_major_locator(HourLocator())
+        ax.xaxis.set_major_formatter(DateFormatter('%d-%H:%M'))
+        ax.set_xlabel(f'Time ({start_time.strftime("%b %d, %Y")})')
+    elif start_time.month == end_time.month:
+        ax.xaxis.set_major_formatter(DateFormatter('%d %H:%M'))
+        ax.set_xlabel(f'Time ({start_time.strftime("%b %Y")})')
+    else:
+        ax.set_xlabel('Time')

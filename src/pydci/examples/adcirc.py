@@ -1,17 +1,19 @@
 import pdb
 import pickle
 from pathlib import Path
-from typing import List, Union
+from typing import List, Union, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 from alive_progress import alive_bar
+from datetime import datetime, timedelta
 
 from pydci import PCAMUDProblem, OfflineSequential
 from pydci.log import disable_log, enable_log, logger
 from pydci.utils import add_noise, get_df, put_df
+from pydci.plotting import create_legend, add_plot_settings, format_time_xlabel
 
 
 def load_full_ds(ds_path: str):
@@ -97,7 +99,18 @@ def build_ds(
     return ret
 
 
-def plot_state(data, samples=None, mask=None, plot_intervals=None, ax=None):
+def plot_state(
+    data,
+    samples=None,
+    mask=None,
+    plot_intervals=None,
+    obs_kwargs=None,
+    pred_kwargs=None,
+    true_kwargs=None,
+    num_plot=10,
+    l_loc='upper left',
+    ax=None
+):
     """
     Plots the true state, observed state, and samples of the state, with
     state being the observed water level at the recording station in the grid.
@@ -119,18 +132,9 @@ def plot_state(data, samples=None, mask=None, plot_intervals=None, ax=None):
         fig, ax = plt.subplots(1, 1, figsize=(12, 7))
 
     mask = data.index.values if mask is None else mask
-    sns.lineplot(
-        data.iloc[mask], x="ts", y="q_lam_true_0", label="True",color='black', linestyle="--", ax=ax
-    )
-    sns.scatterplot(
-        data.iloc[mask],
-        x="ts",
-        y="q_lam_obs_0",
-        marker="*",
-        label="Observed",
-        ax=ax,
-        s=100,
-    )
+    # sns.lineplot(
+    #     data.iloc[mask], x="ts", y="q_lam_true_0", label="True",color='black', linestyle="--", ax=ax
+    # )
 
     if samples is not None:
         cols = [
@@ -138,7 +142,6 @@ def plot_state(data, samples=None, mask=None, plot_intervals=None, ax=None):
             for c in samples.columns
             if c.startswith("q_lam_") and int(c.split("_")[-1]) in mask
         ]
-        num_plot = 10
         for idx, i in enumerate(
             np.random.choice(range(len(samples)), num_plot, replace=False)
         ):
@@ -147,23 +150,72 @@ def plot_state(data, samples=None, mask=None, plot_intervals=None, ax=None):
             )
             to_plot["ts"] = data.iloc[mask]["ts"].values
             label = None if idx != num_plot - 1 else "Predicted"
-            sns.lineplot(
-                to_plot,
+            pred_args = dict(
                 x="ts",
                 y=f"q_lam_s={i}",
                 ax=ax,
-                color="r",
+                color="red",
                 alpha=0.1,
+                linewidth=1,
                 label=label,
+                zorder=2,
             )
+            pred_args.update(pred_kwargs or {})
+            sns.lineplot(to_plot, **pred_args)
+            
+    obs_args = dict(
+        x="ts",
+        y="q_lam_obs_0",
+        marker=".",
+        s=30,
+        label="Observed",
+        ax=ax,
+        zorder=3,
+    )
+    obs_args.update(obs_kwargs or {})
+    sns.scatterplot(data.iloc[mask], **obs_args)
+        
+
+    true_args = dict(
+        x="ts",
+        y="q_lam_true_0",
+        label="True",
+        color='black',
+        linestyle="solid",
+        linewidth="2",
+        zorder=4,
+        ax=ax)
+    true_args.update(true_kwargs or {})
+    sns.lineplot(data.iloc[mask], **true_args)
+    
+    labels = ["Predicted",
+        "True Signal",
+        "Observations"
+        ]
+    styles = ["solid","solid","None"]
+    colors = ["red","black","blue"]
+    create_legend(
+        ax, colors, styles, labels, location=l_loc,
+        font_size=plt.rcParams.get('legend.fontsize'), line_width=2)
+
     
     ax = plot_interval_lines(data, plot_intervals, ax=ax)
 
-    ax.set_ylabel("Water Elevation (m)")
-    ax.set_xlabel("Time")
-    ax.legend()
+    ax.set_ylabel("Water Level (m)")
+    format_time_xlabel(ax, data['ts'].min(), data['ts'].max())
 
     return ax
+
+
+def add_wind_banner(ax, wind_speeds=None, wind_plot_settings=None):
+    """
+    Add wind banner to plot.
+    """
+    pass
+    # ax.set_ylim(wind_plot_settings['y_lim'])
+    # add_banner(ax, wind_speeds=wind_speeds)
+    # wind_plot_settings.update({'ax': ax})
+    # add_plot_settings(**wind_plot_settings)
 
 
 def plot_wind(data, wind_data, time_window=None, plot_intervals=None, ax=None, figsize=(12, 7)):
@@ -190,7 +242,7 @@ def plot_wind(data, wind_data, time_window=None, plot_intervals=None, ax=None, f
     ax = plot_interval_lines(data, plot_intervals, ax=ax)
 
     ax.set_ylabel("Wind Speed (m/s)")
-    ax.set_xlabel("Time")
+    format_time_xlabel(ax, plot_data['time'].min(), plot_data['time'].max())
     ax.legend(loc="lower left")
 
     return ax
@@ -495,3 +547,46 @@ def plot_metric(results, metric="e_r", figsize=(12, 5), ax=None, lineplot_kwargs
             # ax[i].hlines(1, *ax[i].get_xlim(), color='red', linestyle='--')
 
     return ax
+
+def plot_state_with_pca_vecs(
+    data_df,
+    wind_data,
+    pca_problem,
+    mask,
+    time_window,
+    figsize=(12, 8), wl_ylims=None, axs=None):
+    """
+    Plot the state and wind data for a given time window, with the PCA vectors
+    """
+    sns.set_style("whitegrid", {"axes.grid": False})
+    if axs is None:
+        fig, axs = plt.subplots(2, 1, figsize=figsize, sharex=True)
+    plot_state(pca_problem.data, pca_problem.state, mask, plot_intervals=None, ax=axs[0])
+    axs[0].set_ylim(wl_ylims)
+    ax2 = axs[0].twinx()
+    plot_wind(pca_problem.data, wind_data, time_window=time_window, ax=ax2)
+    ax2.set_ylim([-0.1, 26])
+    ax2.legend(loc="lower right")
+    axs[0].legend(loc="upper left")
+
+    pca_problem.pca['vecs']
+    axs[1] = sns.scatterplot(x=data_df.iloc[mask]['ts'], y=pca_problem.pca['vecs'][0], marker='.', ax=axs[1], label=rf'$\mathbf{{p}}^{{(1)}}$')
+    axs[1] = sns.scatterplot(x=data_df.iloc[mask]['ts'], y=pca_problem.pca['vecs'][1], marker='.', ax=axs[1], label=rf'$\mathbf{{p}}^{{(2)}}$')
+    axs[1].legend
+    axs[1].set_ylabel("Weight")
+
+    # Check if the time range is over the course of one day
+    start_time = datetime.strptime(time_window[0], '%Y-%m-%d %H:%M:%S')
+    end_time = datetime.strptime(time_window[1], '%Y-%m-%d %H:%M:%S')
+    if (end_time - start_time) <= timedelta(days=1):
+        axs[1].xaxis.set_major_locator(HourLocator())
+        axs[1].xaxis.set_major_formatter(DateFormatter('%d-%H:%M'))
+        axs[1].set_xlabel(f'Time ({start_time.strftime("%b %d, %Y")})')
+    elif start_time.month == end_time.month:
+        # axs[1].xaxis.set_major_locator(HourLocator())
+        # axs[1].xaxis.set_major_formatter(DateFormatter('%d - %H:%M'))
+        axs[1].set_xlabel(f'Time ({start_time.strftime("%b %Y")})')
+    else:
+        axs[1].set_xlabel('Time')
+
+    return axs

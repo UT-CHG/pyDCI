@@ -343,6 +343,7 @@ class MUDProblem(DCIProblem):
         max_np=8,
         figsize=(14, 6),
         lam_kwargs=None,
+        title=None,
     ):
         # TODO: Add explicit figsize argument.
         base_size = 4
@@ -363,11 +364,12 @@ class MUDProblem(DCIProblem):
             plot_args.update(lam_kwargs)
             self.plot_L(**plot_args)
 
-        fig.suptitle(self._parse_title(lam_true=lam_true))
+        fig.suptitle(self._parse_title(lam_true=lam_true, title=title))
 
     def _parse_title(
         self,
         result=None,
+        title=None,
         lam_true=None,
     ):
         """
@@ -378,14 +380,15 @@ class MUDProblem(DCIProblem):
         passed by call (for calls from sub-classes).
         """
         result = self.result if result is None else result
-        title = super()._parse_title(result=result)
         if lam_true is not None:
             mud_point = get_df(result, "lam_MUD", size=self.n_params)[0]
             l2_err = np.linalg.norm(lam_true - mud_point)
+            title = title if title is not None else ""
             title = (
+                title + 
                 "$||\lambda^{{\dagger}} - \lambda^{{MUD}}||_{{\ell_2}}$"
                 + f" = {l2_err:.3f},  "
-                + title
             )
+        title = super()._parse_title(result=result, title=title)
 
         return title

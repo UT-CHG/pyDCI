@@ -51,10 +51,12 @@ from scipy.stats.distributions import norm
 from sklearn.decomposition import PCA  # type: ignore
 from sklearn.preprocessing import StandardScaler  # type: ignore
 
+import pydci.notation as dcin
 from pydci.consistent_bayes.MUDProblem import MUDProblem
 from pydci.log import disable_log, enable_log, log_table, logger
 from pydci.utils import (KDEError, closest_factors, fit_domain,
                          get_df, put_df, set_shape, print_rich_table)
+
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -92,7 +94,7 @@ class PCAMUDProblem(MUDProblem):
         principal components to use for optimal solution.
 
     TODO:
-        - Make pca_maks a property
+        - Find a way to store pca vectors?
 
     """
 
@@ -149,6 +151,13 @@ class PCAMUDProblem(MUDProblem):
             weights=weights,
         )
         self.qoi = self.q_lam
+        self.pca = None
+
+    def save_state(self, vals):
+        """
+        Save current state, adding columns with values in vals dictionary
+        """
+        super().save_state(vals)
 
     def q_pca(self, mask=None, max_nc=None):
         """
@@ -359,7 +368,7 @@ class PCAMUDProblem(MUDProblem):
                 y=y,
                 ax=ax,
                 color='r',
-                label="$\pi^\mathrm{obs}_\mathcal{D} = \mathcal{N}(0, 1)$",
+                label= dcin.pi('ob') +  "$ = \mathcal{N}(0, 1)$",
             )
             obs_args.update(obs_kwargs)
             ax = sns.lineplot(
@@ -368,7 +377,13 @@ class PCAMUDProblem(MUDProblem):
             labels.append(obs_args["label"])
         
         # Set plot specifications
-        ax.set_xlabel(fr"$\mathbf{{q}}_{state_idx}$")
+        ax.set_xlabel(dcin.q(idx=state_idx))
+        # ax.set_xlabel(fr"$\mathbf{{q}}_{state_idx}$")
+        # Center x axis around 0, +- abs(max/min x value)
+        lims = ax.get_xlim()
+        max_range = np.max([np.abs(lims[0]), np.abs(lims[1])])
+        ax.set_xlim([-max_range, max_range])
+        
         if plot_legend:
             ax.legend(
                 labels=labels,
@@ -424,8 +439,8 @@ class PCAMUDProblem(MUDProblem):
         else:
             raise ValueError(f"Invalid type: {type}")
 
-        if cbar_range is not None:
-            vmin, vmax = cbar_range
+        if cb_range is not None:
+            vmin, vmax = cb_range
         else:
             vmin = self.state[hue_col].min()
             vmax = self.state[hue_col].max()
@@ -447,9 +462,16 @@ class PCAMUDProblem(MUDProblem):
         plot_args.update(kwargs)
 
         sns.scatterplot(**plot_args)
-        ax.set_xlabel(f"$\lambda_{param_x}$")
-        ax.set_ylabel(f"$\lambda_{param_y}$")
-        ax.set_title("Learned QoI" if type == 'qoi' else "Update Ratio")
+        dcin
+        ax.set_xlabel(dcin.lam(idx=param_x))
+        ax.set_ylabel(dcin.lam(idx=param_y))
+        if type == 'qoi':
+            title = 'Learned QoI '
+            title += dcin.q() + '$=$'
+            title += dcin.q_pca(arg=dcin.lam())  
+        else:
+            title = 'Update Ratio '
+        ax.set_title(title, pad=10)
         ax.get_legend().remove()
 
         # Add colorbar
@@ -461,9 +483,8 @@ class PCAMUDProblem(MUDProblem):
         fig.colorbar(sm, cax=cbar_ax)
 
         if type == 'qoi':
-            title = rf'$q_{state_idx}(\mathbf{{\lambda}})$'
-            if type == 'qoi':
-                title = rf'$q_{state_idx}(\mathbf{{\lambda}})$'
+            title = dcin.q(idx=state_idx)
+            # title = rf'$q_{state_idx}(\mathbf{{\lambda}})$'
         else:
             if weighted:
                 title = rf'$w*r(\mathbf{{\lambda}})$'
@@ -489,12 +510,13 @@ class PCAMUDProblem(MUDProblem):
         self,
         result=None,
         lam_true=None,
+        title=None,
     ):
         """
         Parse title for plots
         """
         result = self.result if result is None else result
-        title = super()._parse_title(result=result, lam_true=lam_true)
+        title = super()._parse_title(result=result, lam_true=lam_true, title=title)
 
         return title
 

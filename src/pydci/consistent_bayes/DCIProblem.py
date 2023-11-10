@@ -45,10 +45,7 @@ from pydci.utils import (
     print_rich_table,
     fmt_bytes,
 )
-from pydci.notation import(
-    exp_ratio_str,
-    kl_str,
-)
+import pydci.notation as dcin
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -654,7 +651,8 @@ class DCIProblem(object):
         # deep_colors = sns.color_palette("deep", n_colors=self.n_params)
 
         if initial_kwargs is not None:
-            pi_in_label = rf"$\pi^{{in}}_{{\lambda_{param_idx}}}$"
+            # pi_in_label = dcin.pi('in', arg=dcin.param(idx=param_idx))
+            # pi_in_label = rf"$\pi^{{in}}_{{\lambda_{param_idx}}}$"
             init_args = dict(
                 data=df,
                 x=f"{param_col}_{param_idx}",
@@ -662,7 +660,7 @@ class DCIProblem(object):
                 fill=True,
                 color=bright_colors[param_idx],
                 linestyle=":",
-                label=pi_in_label,
+                label=dcin.pi('in', arg=dcin.lam(), idx=param_idx),
                 weights=weight_col,
             )
             init_args.update(initial_kwargs)
@@ -670,14 +668,15 @@ class DCIProblem(object):
             labels.append(init_args["label"])
 
         if update_kwargs is not None:
-            pi_up_label = rf"$\pi^{{up}}_{{\lambda_{param_idx}}}$"
+            # pi_up_label = dcin.pi('up', arg=dcin.param(idx=param_idx))
+            # pi_up_label = rf"$\pi^{{up}}_{{\lambda_{param_idx}}}$"
             update_args = dict(
                 data=df,
                 x=f"{param_col}_{param_idx}",
                 ax=ax,
                 fill=True,
                 color=bright_colors[param_idx],
-                label=pi_up_label,
+                label=dcin.pi('up', arg=dcin.lam(), idx=param_idx),
                 weights=df[weight_col] * df[ratio_col],
             )
             update_args.update(update_kwargs)
@@ -685,7 +684,8 @@ class DCIProblem(object):
             labels.append(update_args["label"])
 
         # Set plot specifications
-        ax.set_xlabel(rf"$\lambda_{param_idx}$")
+        ax.set_xlabel(dcin.lam(idx=param_idx))
+        # ax.set_xlabel(rf"$\lambda_{param_idx}$")
         if plot_legend:
             ax.legend(
                 labels=labels,
@@ -770,7 +770,7 @@ class DCIProblem(object):
                 fill=True,
                 color=bright_colors[state_idx],
                 linestyle=":",
-                label=rf"$\pi^{{pr}}_{{Q(\lambda)_{state_idx}}}$",
+                label=dcin.pi('pr', arg=dcin.q_pca(idx=state_idx), idx=state_idx), # rf"$\pi^{{pr}}_{{Q(\lambda)_{state_idx}}}$",
                 weights=self.state["weight"],
             )
             pr_args.update(pr_kwargs)
@@ -779,7 +779,8 @@ class DCIProblem(object):
         
         if obs_kwargs is not None:
             # TODO: Check this
-            obs_label = rf"$\pi^{{obs}}_{{\lambda_{state_idx}}}$"
+            obs_label = dcin.pi('ob', arg=dcin.q_pca(idx=state_idx), idx=state_idx)
+            # obs_label = rf"$\pi^{{obs}}_{{\lambda_{state_idx}}}$"
             obs_args = dict(
                 color="r",
                 label=obs_label,
@@ -795,7 +796,8 @@ class DCIProblem(object):
             labels.append(obs_args["label"])
 
         if pf_kwargs is not None:
-            pf_label = rf"$\pi^{{pf}}_{{\lambda_{state_idx}}}$"
+            pf_label = dcin.pi('pf', arg=dcin.q_pca(idx=state_idx), idx=state_idx)
+            # pf_label = rf"$\pi^{{pf}}_{{\lambda_{state_idx}}}$"
             pf_args = dict(
                 data=df,
                 x=f"{state_col}_{state_idx}",
@@ -906,6 +908,7 @@ class DCIProblem(object):
         fig = axs[0].get_figure()
         fig.suptitle(
             self._parse_title(
+                title=tilte,
                 result=self.result,
             )
         )
@@ -917,6 +920,7 @@ class DCIProblem(object):
         base_size=4,
         max_np=8,
         figsize=(14, 6),
+        title=None,
         lam_kwargs=None,
     ):
         # TODO: Add explicit figsize argument.
@@ -937,7 +941,7 @@ class DCIProblem(object):
             plot_args.update(lam_kwargs)
             self.plot_L(**plot_args)
 
-        fig.suptitle(self._parse_title())
+        fig.suptitle(self._parse_title(title=title))
 
     def state_density_plots(
         self,
@@ -945,6 +949,7 @@ class DCIProblem(object):
         max_ns=8,
         figsize=(14, 6),
         q_lam_kwargs=None,
+        title=None,
     ):
         # TODO: Add explicit figsize argument.
         base_size = 4
@@ -964,10 +969,11 @@ class DCIProblem(object):
             plot_args.update(q_lam_kwargs)
             self.plot_D(**plot_args)
 
-        fig.suptitle(self._parse_title())
+        fig.suptitle(self._parse_title(title=title))
 
     def _parse_title(
         self,
+        title=None,
         result=None,
     ):
         """
@@ -977,9 +983,8 @@ class DCIProblem(object):
         kl = result["kl"].values[0]
         e_r = result["e_r"].values[0]
         # title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{KL}}_{{DCI}}$= {kl:.3f}"
-        title = ', '.join(
-            [exp_ratio_str(e_r, format_spec=".3f"),
-             kl_str(kl, format_spec=".3f")])
-
+        title = title if title is not None else ""
+        title += f'{dcin.exp_ratio_str(e_r, format_spec=".3f")},{dcin.kl_str(kl, format_spec=".3f")}'
+        
         return title
         

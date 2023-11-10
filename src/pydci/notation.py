@@ -3,6 +3,16 @@ PyDCI Notation
 
 LaTex strings for plots to keep notation consistent
 """
+from pydci.log import logger
+
+DEF_NAMES = {'in': 'init',
+            'up': 'update',
+            'pr': 'pred',
+            'ob': 'obs',
+            'pf': 'pf-up',
+            'mud': 'MUD',
+            'true': r'\dagger'}
+            
 
 def gen_value_str(
     base: str = '\\lambda',
@@ -14,6 +24,14 @@ def gen_value_str(
     wrap: bool = True) -> str:
     """
     Generates a LaTeX-formatted parameter/observable string with optional superscripts or subscripts.
+
+    General pyDCI value notation (for values such as parameters, observables, etc.) the following conventions:
+
+    - The base symbol is a Greek letter, e.g. '\\lambda'.
+    - The superscript is the sample number, e.g. '\\lambda^{(2)}'.
+    - The subscript is the parameter index, e.g. '\\lambda_{1}'.
+    - The name is a string, e.g. '\\lambda^{MUD}', can indicate special values
+    - The iteration is an integer, e.g. '\\lambda^{MUD,3}', can indicate iterative updates/values
 
     Parameters
     ----------
@@ -41,15 +59,15 @@ def gen_value_str(
 
     Examples
     --------
-    >>> param()
+    >>> gen_value_str()
     '$\lambda$'
     >>> param(base='x', sample=2)
     '$\lambda^{(2)}$'
-    >>> param(base='x', param_i=1)
+    >>> gen_value_str(base='x', param_i=1)
     '$\lambda_{1}$'
-    >>> param(base='x', name='MUD')
+    >>> gen_value_str(base='x', name='MUD')
     '$\lambda^{MUD}$'
-    >>> param(base='x', name='MUD', iteration=3)
+    >>> gen_value_str(base='x', name='MUD', iteration=3)
     '$\lambda^{MUD,3}$'
 
     Notes
@@ -71,6 +89,7 @@ def gen_value_str(
         param_str += rf'_{{{idx}}}'
 
     return rf'${param_str}$' if wrap else param_str
+
 
 def gen_dist_str(
     base: str = '\pi',
@@ -120,11 +139,15 @@ def gen_dist_str(
     if iteration is not None:    
         dist_str += rf'^{{({iteration})}}'
     if idx is not None:
-        dist_str += rf'|_{{{idx}}}'
+        dist_str += rf''
+        # TODO: how to indicate marginals?
+        # logger.warning('Notation for marginal densities tbd.')
+        # dist_str += rf'|_{{{idx}}}'
     if arg is not None:
         dist_str += rf'({arg})'
     
     return f"${dist_str}$" if wrap else dist_str
+
 
 def gen_fun_str(
     base: str = 'Q',
@@ -178,6 +201,7 @@ def gen_fun_str(
     
     return f"${fun_str}$" if wrap else fun_str
 
+
 def gen_latex(
     key: str,
     idx: str = None,
@@ -194,7 +218,7 @@ def gen_latex(
     Parameters
     ----------
     key : str
-        The key specifying the type of component ('param', 'qoi', 'dist', or 'Q').
+        The key specifying the type of component ('param', 'q', 'dist', or 'Q').
     idx : str, optional
         The index string (default: None).
     iteration : str, optional
@@ -219,7 +243,7 @@ def gen_latex(
     --------
     >>> gen_latex('param', idx='i', iteration=2, sample=1, name=0.5, bold=False, wrap=False)
     '\\lambda_{i}^{(2)}^{(1)}_{0.5}'
-    >>> gen_latex('qoi', idx='j', sample=3, name=1.0, wrap=False)
+    >>> gen_latex('q', idx='j', sample=3, name=1.0, wrap=False)
     'q_{j}^{(3)}_{1.0}'
     >>> gen_latex('dist', name='X', idx='k', arg='x', wrap=False)
     '\\pi_{X}|_{k}(x)'
@@ -230,6 +254,8 @@ def gen_latex(
         sub_key = arg.pop('key')
         arg['wrap'] = False
         arg = gen_latex(sub_key, **arg)
+    elif isinstance(arg, str):
+        arg = unwrap(arg)
 
     if key == 'param':
         return gen_value_str(
@@ -241,7 +267,7 @@ def gen_latex(
             bold=bold,
             wrap=wrap,
         )
-    elif key == 'qoi':
+    elif key == 'q':
         return gen_value_str(
             base='q',
             idx=idx,
@@ -269,8 +295,151 @@ def gen_latex(
             arg=arg,
             wrap=wrap,
         )
+    elif key == 'r':
+        return gen_fun_str(
+            base='r',
+            name=name,
+            idx=idx,
+            sample=sample,
+            iteration=iteration,
+            arg=arg,
+            wrap=wrap,
+        )
     else:
-        raise ValueError(f"Invalid key: {key}. Valid keys are 'param', 'qoi', 'dist', 'Q'")
+        # Default to a value (ector or scalar)
+        return gen_value_str(
+            base=key,
+            name=name,
+            idx=idx,
+            iteration=iteration,
+            wrap=wrap,
+            bold=bold,
+        )
+
+
+def unwrap(s: str) -> str:
+    """
+    Removes the $ character from the start and end of a string if it is wrapped in $.
+
+    Args:
+        s: The string to process.
+
+    Returns:
+        The processed string.
+    """
+    if s.startswith('$') and s.endswith('$'):
+        return s[1:-1]
+    else:
+        return s
+
+
+def mud_pt(
+    iteration=None,
+    idx=None,
+):
+    return gen_latex(
+        'param',
+        iteration=iteration,
+        idx=idx,
+        name='MUD',
+        bold=True,
+    )
+
+def Q(
+    iteration=None,
+    idx=None,
+    name=None,
+    bold=True,
+    arg=None,
+):
+    return gen_latex(
+        'Q',
+        iteration=iteration,
+        idx=idx,
+        name=name,
+        arg=arg,
+    )
+
+
+def q_pca(
+    iteration=None,
+    idx=None,
+    bold=True,
+    arg=None,
+):
+    return gen_latex(
+        'Q',
+        iteration=iteration,
+        idx=idx,
+        name='PCA',
+        arg=arg,
+    )
+
+def q(
+    iteration=None,
+    idx=None,
+    name=None,
+    bold=True,
+):
+    return gen_latex(
+        'q',
+        iteration=iteration,
+        idx=idx,
+        name=name,
+        bold=bold,
+    )
+
+def lam(
+    iteration=None,
+    idx=None,
+    name=None,
+    bold=True,
+):
+    return gen_latex(
+        'param',
+        iteration=iteration,
+        idx=idx,
+        name=name,
+        bold=bold,
+    )
+
+def r(
+    iteration=None,
+    idx=None,
+    name=None,
+    arg=None,
+):
+    """
+    Update ratio string
+    """
+    return gen_latex(
+        'r',
+        iteration=iteration,
+        idx=idx,
+        name=name,
+        bold=False,
+        arg=arg,
+    )
+
+def pi(
+    name,
+    iteration=None,
+    idx=None,
+    arg=None,
+):
+    """
+    Entry point for generating distribution strings
+    """
+    if name not in DEF_NAMES.keys():
+        raise ValueError(f'Unknown distribution name: {name}')
+
+    return gen_latex(
+        'dist',
+        iteration=iteration,
+        idx=idx,
+        name=DEF_NAMES[name],
+        arg=arg,
+    )
 
 
 def exp_ratio_str(e_r, format_spec=".3f", iteration=None):
@@ -278,7 +447,7 @@ def exp_ratio_str(e_r, format_spec=".3f", iteration=None):
     Expected ratio string
     """
     iteration_str = rf"^{{({iteration})}}" if iteration is not None else ""
-    return rf"$\mathbb{{E}}(r{iteration_str})$= {e_r:{format_spec}}, "
+    return rf"$\mathbb{{E}}(r{iteration_str})$= {e_r:{format_spec}}"
 
 def kl_str(kl, format_spec=".3f"):
     """
