@@ -108,7 +108,7 @@ def plot_state(
     pred_kwargs=None,
     true_kwargs=None,
     num_plot=10,
-    l_loc='upper left',
+    leg_kwargs={'location': 'upper left'},
     ax=None
 ):
     """
@@ -194,10 +194,11 @@ def plot_state(
         ]
     styles = ["solid","solid","None"]
     colors = ["red","black","blue"]
+    leg_args = dict(font_size=plt.rcParams.get('legend.fontsize'), line_width=2)
+    leg_args.update(leg_kwargs or {})
     create_legend(
-        ax, colors, styles, labels, location=l_loc,
-        font_size=plt.rcParams.get('legend.fontsize'), line_width=2)
-
+        ax, colors, styles, labels, **leg_args
+    )
     
     ax = plot_interval_lines(data, plot_intervals, ax=ax)
 
@@ -590,3 +591,6 @@ def plot_state_with_pca_vecs(
         axs[1].set_xlabel('Time')
 
     return axs
+
+def wind_speed(base='u'):
+    return "$||\mathbf{u}_{10m}||_{\ell_2}$"

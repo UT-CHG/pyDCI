@@ -493,8 +493,243 @@ class PCAMUDProblem(MUDProblem):
         cbar_ax.set_title(title)
 
         return ax
+    
+    def plot_qoi_over_params(
+        self,
+        df=None,
+        param_x=0,
+        param_y=1,
+        state_idxs=None,
+        weighted=False,
+        same_colorbar=True,
+        scatter_kwargs=None,
+        cbar_pos=[0.01, 0.03],
+        axs=None,
+    ):
+        """
+        Create scatter plots over the parameter space, contoured by different learned QoI.
 
-    def learned_qoi_plot(self, nc_mask=None):
+        Parameters
+        ----------
+        state_idx : int, optional
+            The index of the state to plot, by default 0.
+        weighted : bool, optional
+            Whether to plot the weighted update ratio, by default False.
+        same_colorbar : bool, optional
+            Whether to use the same colorbar for all subplots, by default True.
+
+        Returns
+        -------
+        None
+        """
+        if self.n_params < 2:
+            raise ValueError("Must have at least 2 parameters to plot") 
+
+        if len(cbar_pos) != 2:
+            raise ValueError(f"cbar_pos must be of length 2: {cbar_pos}")
+        
+        df = self.state if df is None else df
+
+        pca_cols = [col for col in df.columns if col.startswith("q_pca")]
+        if state_idxs is not None:
+            # only plot states in state_idxs list
+            pca_cols = [col for col in pca_cols if int(col.split("_")[-1]) in state_idxs]
+            if len(state_idxs) > len(pca_cols):
+                not_in = [i for i in state_idxs if i not in range(self.n_states)]
+                raise ValueError(f"state_idxs must be a subset of the number of states: {not_in}")
+        else:
+            state_idxs = range(len(pca_cols))
+
+        if axs is None:
+            base_size = 5
+            grid_plot = closest_factors(len(state_idxs))
+            fig, axs = plt.subplots(
+                grid_plot[0],
+                grid_plot[1],
+                figsize=(grid_plot[1] * (base_size), grid_plot[0] * (base_size)),
+                sharex=True,
+                sharey=True,
+            )
+        else:
+            if len(axs) != len(state_idxs):
+                raise ValueError(f"axs must be of length states: {len(axs)} != {len(state_idxs)}")
+            fig = plt.gcf()
+
+        vmin = np.inf
+        vmax = -np.inf
+        if same_colorbar:
+            # Get vmin accros q_pca_cols
+            vmin = df[pca_cols].min().min()
+            vmax = df[pca_cols].max().min()
+            sm = plt.cm.ScalarMappable(
+                cmap="viridis",
+                norm=plt.Normalize(vmin=vmin, vmax=vmax),
+            )
+            sm._A = []
+        else:
+            vmin = np.inf
+            vmax = -np.inf
+
+            
+        for i, ax in enumerate(axs.flat):
+            hue_col = f'q_pca_{state_idxs[i]}'
+            
+            if not same_colorbar:
+                vmin = df[hue_col].min()
+                vmax = df[hue_col].max()
+                sm = plt.cm.ScalarMappable(
+                    cmap="viridis",
+                    norm=plt.Normalize(vmin=vmin, vmax=vmax),
+                )
+                sm._A = []
+            kwargs = dict(
+                x=df[f"lam_{param_x}"],
+                y=df[f"lam_{param_y}"],
+                hue=df[hue_col],
+                palette="viridis",
+                ax=ax,
+                s=100,
+                hue_norm=plt.Normalize(vmin=vmin, vmax=vmax),   
+            ) 
+            kwargs.update(scatter_kwargs or {})
+            sns.scatterplot(**kwargs)
+            ax.set_xlabel(dcin.lam(idx=param_x))
+            ax.set_ylabel(dcin.lam(idx=param_y))
+            ax.set_title(dcin.q(idx=state_idxs[i]))
+            ax.get_legend().remove()
+            if not same_colorbar:
+                cbar_loc = [ax.get_position().x1+cbar_pos[0],
+                     ax.get_position().y0,
+                     cbar_pos[1], ax.get_position().height]
+                cbar_ax = fig.add_axes(cbar_loc)
+                fig.colorbar(sm, cax=cbar_ax)
+                cbar_ax.set_title(dcin.q(idx=state_idxs[i]))
+
+        if same_colorbar:
+            fig.subplots_adjust(right=0.85)
+            cbar_ax = fig.add_axes([0.9, 0.15, 0.03, 0.7])
+            fig.colorbar(sm, cax=cbar_ax)
+            title = dcin.q_pca(idx='j')
+            cbar_ax.set_title(title)
+
+        return axs
+    
+    def learned_qoi_plots(
+        self,
+        df=None,
+        state_x=0,
+        state_y=1,
+        hue_cols=['weighted_ratio'],
+        same_colorbar=True,
+        scatter_kwargs=None,
+        cbar_pos=[0.01, 0.03],
+        axs=None,
+    ):
+        """
+        Create scatter plots of the learned_qoi space.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        None
+        """
+        if self.n_states < 2:
+            raise ValueError("Must have at least 2 parameters to plot") 
+
+        if len(cbar_pos) != 2:
+            raise ValueError(f"cbar_pos must be of length 2: {cbar_pos}")
+        
+        df = self.state if df is None else df
+
+        bad_cols = [col for col in hue_cols if col not in df.columns]
+        if len(bad_cols) > 0:
+            raise ValueError(f"Invalid cols to color qoi by: {bad_cols}")
+        if axs is None:
+            base_size = 5
+            grid_plot = closest_factors(len(hue_cols))
+            fig, axs = plt.subplots(
+                grid_plot[0],
+                grid_plot[1],
+                figsize=(grid_plot[1] * (base_size), grid_plot[0] * (base_size)),
+                sharex=True,
+                sharey=True,
+            )
+        else:
+            if len(axs) != len(hue_cols):
+                raise ValueError(f"axs must be of length different hue_cols: {len(axs)} != {len(hue_cols)}")
+            fig = plt.gcf()
+
+        vmin = np.inf
+        vmax = -np.inf
+        if same_colorbar:
+            # Get vmin accros q_pca_cols
+            vmin = df[hue_cols].min().min()
+            vmax = df[hue_cols].max().min()
+            sm = plt.cm.ScalarMappable(
+                cmap="viridis",
+                norm=plt.Normalize(vmin=vmin, vmax=vmax),
+            )
+            sm._A = []
+        else:
+            vmin = np.inf
+            vmax = -np.inf
+
+            
+        ax_list = [axs] if len(hue_cols) == 1 else axs.flat
+        for i, ax in enumerate(ax_list):
+            hue_col = hue_cols[i]
+            
+            if not same_colorbar:
+                vmin = df[hue_col].min()
+                vmax = df[hue_col].max()
+                sm = plt.cm.ScalarMappable(
+                    cmap="viridis",
+                    norm=plt.Normalize(vmin=vmin, vmax=vmax),
+                )
+                sm._A = []
+            kwargs = dict(
+                x=df[f"q_pca_{state_x}"],
+                y=df[f"q_pca_{state_y}"],
+                hue=df[hue_col],
+                palette="viridis",
+                ax=ax,
+                s=100,
+                hue_norm=plt.Normalize(vmin=vmin, vmax=vmax),   
+            ) 
+            kwargs.update(scatter_kwargs or {})
+            sns.scatterplot(**kwargs)
+            ax.set_xlabel(dcin.q(idx=state_x))
+            ax.set_ylabel(dcin.q(idx=state_y))
+            # ax.set_title(dcin.q(idx=state_idxs[i]))
+            ax.get_legend().remove()
+            if not same_colorbar:
+                cbar_loc = [ax.get_position().x1+cbar_pos[0],
+                        ax.get_position().y0,
+                        cbar_pos[1], ax.get_position().height]
+                cbar_ax = fig.add_axes(cbar_loc)
+                fig.colorbar(sm, cax=cbar_ax)
+                if hue_col == 'weighted_ratio':
+                    # TODO: Add weighted ratio option
+                    cbar_ax.set_title(r'$wr$')
+                elif hue_col == 'ratio':
+                    cbar_ax.set_title(r'$r$')
+
+        if same_colorbar:
+            fig.subplots_adjust(right=0.85)
+            cbar_ax = fig.add_axes([0.9, 0.15, 0.03, 0.7])
+            fig.colorbar(sm, cax=cbar_ax)
+            if hue_col == 'weighted_ratio':
+                # TODO: Add weighted ratio option
+                cbar_ax.set_title(r'$wr$')
+            elif hue_col == 'ratio':
+                cbar_ax.set_title(r'$r$')
+
+        return axs
+
+    
+    def learned_qoi_plot_joint_plot(self, nc_mask=None):
         """
         Scatter plots of learned `q_pca` components.
         """

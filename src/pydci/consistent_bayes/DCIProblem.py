@@ -888,6 +888,7 @@ class DCIProblem(object):
         q_lam_kwargs=None,
         axs=None,
         figsize=(14, 6),
+        title=None,
     ):
         """
         Plot param and observable space onto sampe plot
@@ -908,7 +909,7 @@ class DCIProblem(object):
         fig = axs[0].get_figure()
         fig.suptitle(
             self._parse_title(
-                title=tilte,
+                title=title,
                 result=self.result,
             )
         )
@@ -984,7 +985,7 @@ class DCIProblem(object):
         e_r = result["e_r"].values[0]
         # title = f"$\mathbb{{E}}(r)$= {e_r:.3f}, " + f"$\mathcal{{KL}}_{{DCI}}$= {kl:.3f}"
         title = title if title is not None else ""
-        title += f'{dcin.exp_ratio_str(e_r, format_spec=".3f")},{dcin.kl_str(kl, format_spec=".3f")}'
+        title += f'{dcin.exp_ratio_str(e_r, format_spec=".3f")},{dcin.kl_str(value=kl, format_spec=".3f")}'
         
         return title
         

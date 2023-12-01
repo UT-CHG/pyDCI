@@ -44,10 +44,15 @@ from scipy.stats import rv_continuous  # type: ignore
 from scipy.stats.distributions import norm
 from sklearn.decomposition import PCA  # type: ignore
 from sklearn.preprocessing import StandardScaler  # type: ignore
+import seaborn as sns
+from typing import Optional
+import matplotlib.pyplot as plt
+from matplotlib.axes import Axes 
 
 from pydci import OfflineSequential
 from pydci.log import disable_log, enable_log, log_table, logger
 from pydci.utils import KDEError, closest_factors, fit_domain, get_df, put_df, set_shape, get_search_combinations
+import pydci.notation as dcin
 
 sns.color_palette("bright")
 sns.set_style("darkgrid")
@@ -172,10 +177,10 @@ class OfflineSequentialSearch:
 
         with alive_bar(
             len(search_list),
-            title="Solving for different combinations",
+            title="Searching...",
             force_tty=True,
             receipt=False,
-            length=40,
+            length=20,
         ) as bar:
             for idx, args in enumerate(search_list):
                 prob = OfflineSequential(
@@ -189,7 +194,7 @@ class OfflineSequentialSearch:
                 args.update(dict(
                     fail_on_partial=fail_on_partial,
                 ))
-                logger.info(f"Attempting solve with args: {args}")
+                logger.debug(f"Attempting solve with args: {args}")
                 try:
                     prob.solve(**args)
                 except RuntimeError:
@@ -458,17 +463,19 @@ class OfflineSequentialSearch:
         search_idxs=None,
         figure_size=None,
         max_np=9,
+        ax=None,
         **kwargs,
     ):
         n_params = self.n_params if self.n_params <= max_np else max_np
         grid_plot = closest_factors(n_params)
-        fig, ax = plt.subplots(
-            grid_plot[0],
-            grid_plot[1],
-            figsize=figure_size
-            if figure_size is not None
-            else (grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
-        )
+        if ax is None:
+            fig, ax = plt.subplots(
+                grid_plot[0],
+                grid_plot[1],
+                figsize=figure_size
+                if figure_size is not None
+                else (grid_plot[0] * (base_size + 2), grid_plot[0] * base_size),
+            )
 
         lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
         for i, ax in enumerate(ax.flat):
@@ -482,12 +489,16 @@ class OfflineSequentialSearch:
             )
             ax.set_title(rf"$\lambda_{i}$")
 
+        if fig is None:
+            fig = ax.get_figure()
+
         fig.suptitle(
             self._parse_title(
                 lam_true=lam_true,
             )
         )
-        fig.tight_layout()
+
+        return ax
 
     def metric_plot(
         self,
@@ -510,7 +521,7 @@ class OfflineSequentialSearch:
 
         # Add one row for first iteration of each option searched
         sr = self.full_search_results.copy()
-        sr[x_label] = (sr["i"] + 1) / sr["num_splits"]
+        sr[x_label] = (sr["i"] + 1) / sr["I"]
         first = sr[sr["i"] == 0].copy()
         first[x_label] = 0
         plot_df = pd.concat([first, sr])
@@ -578,9 +589,10 @@ class OfflineSequentialSearch:
         """
         fig, ax = plt.subplots(2, 1, figsize=figsize)
 
-        self.metric_plot(metric="e_r", e_r_thresh=e_r_thresh, ax=ax[0])
+        ax[0] = self.metric_plot(metric="e_r", e_r_thresh=e_r_thresh, ax=ax[0])
+        ax[1] = self.metric_plot(metric="kl", kl_thresh=kl_thresh, ax=ax[1])
 
-        self.metric_plot(metric="kl", kl_thresh=kl_thresh, ax=ax[1])
+        return ax
 
     def _parse_title(
         self,
@@ -596,3 +608,111 @@ class OfflineSequentialSearch:
         # TODO: Add best index to title
 
         return title
+    
+    def barplot(self, x: str = 'pca_mask', y: str = 'e_r', hue: str = 'pca_components', df: Optional[pd.DataFrame] = None,
+                x_sz_factor: float = 0.05, y_zoom_factor: float = 0.1, ax=None) -> Axes:
+        """
+        Plot a barplot using seaborn.
+
+        Parameters:
+            x (str): The column name to be plotted on the x-axis. Default is 'pca_mask'.
+            y (str): The column name to be plotted on the y-axis. Default is 'e_r'.
+            hue (str): The column name to be used for grouping the bars. Default is 'pca_components'.
+            df (pd.DataFrame): The dataframe containing the data to be plotted. Default is self.results.
+            x_sz_factor (float): The factor to amplify the x range. Default is 0.05.
+            y_zoom_factor (float): The factor to amplify the y range. Default is 0.1.
+
+        Returns:
+            Axes: The axis object containing the barplot.
+        """
+        if df is None:
+            df = self.results
+
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(12, 8))
+
+        ax = sns.barplot(data=df, x=x, y=y, hue=hue, ax=ax)
+
+        # Amplify x range +- x_sz_factor*range to make the plot look nicer
+        lims = ax.get_xlim()
+        x_sz = lims[1] - lims[0]   
+        ax.set_xlim(ax.get_xlim()[0] - x_sz*x_sz_factor, ax.get_xlim()[1] + x_sz*x_sz_factor)
+
+        # Amplify y range +- y_zoom_factor*range to make the plot look nicer
+        lims = ax.get_ylim()
+        y_sz = lims[1] - lims[0] 
+        ax.set_ylim(ax.get_ylim()[0], ax.get_ylim()[1] + y_sz*y_zoom_factor)
+
+        return ax
+
+    def get_l2_error(self, lam_true, relative=True, results_df=None) -> Optional[np.ndarray]:
+        """
+        TODO: Document
+        """
+        l2_err = None
+        results = self.results if results_df is None else results_df 
+        if results is not None:
+            l2_err = np.linalg.norm(
+                get_df(results, 'lam_MUD', size=self.n_params) - lam_true, axis=1)
+            if relative:
+                l2_err = np.divide(l2_err, np.linalg.norm(lam_true))
+            
+        return l2_err
+
+    def summary_barplots_by_num_data(self, lam_true = None, e_r_thresh= 0.2, results_df=None, axs=None) -> None:
+        """
+        Plot the e_r values by the number of data points used.
+
+        Parameters:
+            self (OfflineSequentialSearch): The OfflineSequentialSearch object.
+            e_r_thresh (float, optional): The threshold value for e_r. Default is 0.2.
+        """
+        results = self.results if results_df is None else results_df
+        results =self.process_results(lam_true=lam_true, e_r_thresh=e_r_thresh, results_df=results_df)
+
+        if axs is None:
+            fig, axs = plt.subplots(3, 1, figsize=(12, 12))
+
+        x_label = 'Number of Data Points Used'
+        group_label = 'Number of Components Used'
+        ax1 = self.barplot(df=results, x=x_label, hue=group_label, y='l2_err', x_sz_factor=0.1, y_zoom_factor=0.2, ax=axs[0])
+        ax1.set_ylabel('Relative $\ell_2$ Error')
+        ax2 = self.barplot(df=results, x=x_label, hue=group_label, y='e_r', x_sz_factor=0.1, y_zoom_factor=0.2, ax=axs[1])
+        ax2.set_ylabel(dcin.e_r())
+        ax3 = self.barplot(df=results, x=x_label, hue=group_label, y='kl', x_sz_factor=0.1, y_zoom_factor=0.2, ax=axs[2])
+        ax3.set_ylabel(dcin.kl_str())
+        if e_r_thresh is not None:
+            xlims = ax2.get_xlim()
+            ax2.hlines(
+                [1 + e_r_thresh, 1 - e_r_thresh],
+                xmin=xlims[0],
+                xmax=xlims[1],
+                color="blue",
+                linestyle=":",
+                label=rf"$\pm \epsilon_\mathrm{{pred}} = {e_r_thresh}$",
+            )
+        
+        return [ax1, ax2, ax3]
+
+    
+    def process_results(self, lam_true = None, e_r_thresh= 0.2, results_df=None) -> None:
+        """
+        TODO:
+        Document 
+        """
+        # TODO: Create a make_readable results method
+        results = self.results if results_df is None else results_df
+        x_label = 'Number of Data Points Used'
+        num_data = [eval(x)[-1] for x in results['pca_mask']]
+        results[x_label] = num_data
+
+        x_label = 'Number of Data Points Used'
+        group_label = 'Number of Components Used'
+        num_components = [len(eval(x)) for x in results['pca_components']]
+        results[group_label] = num_components
+
+        if lam_true is not None:
+            results.loc[:,'l2_err']  = self.get_l2_error(lam_true, results_df=results_df)
+        
+        return results
+        

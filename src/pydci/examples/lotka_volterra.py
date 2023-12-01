@@ -1,5 +1,7 @@
 """
 Lotka-Volterra (Predator-Prey) System
+
+
 """
 import matplotlib.pyplot as plt
 import numpy as np
@@ -80,16 +82,19 @@ class LotkaVolterraModel(DynamicModel):
         measurement_noise=1,
         **kwargs,
     ):
+        if 'param_mins' not in kwargs.keys():
+            kwargs["param_mins"] = LV_PARAM_MINS
+        if 'state_mins' not in kwargs.keys():
+            kwargs["state_mins"] = LV_STATE_MINS
         super().__init__(
             x0,
             lam_true,
             solve_ts=solve_ts,
             sample_ts=sample_ts,
             measurement_noise=measurement_noise,
-            param_mins=LV_PARAM_MINS,
-            state_mins=LV_STATE_MINS,
             **kwargs,
         )
+        self._solve_info = None
 
     def forward_model(self, x0, times, parameter_samples) -> None:
         """
@@ -103,20 +108,26 @@ class LotkaVolterraModel(DynamicModel):
         self : object
             The instance of the class
         """
-        return odeint(lotka_volterra_system, x0, times, args=parameter_samples)
+        res, info = odeint(lotka_volterra_system, x0, times, args=parameter_samples, full_output=True)
+        self._solve_info = info
+        return res
 
-    def plot_states(self, **kwargs):
+    def plot_states(self, axes=None, **kwargs):
         """
         Plot states over time
         """
-        fig, ax = plt.subplots(2, 1, figsize=(12, 8))
-        title = ["Predator", "Prey"]
-        for i, ax in enumerate(ax.flat):
+        fig, axes = plt.subplots(2, 1, figsize=(12, 10))
+        title = ["Prey", "Predator"]
+        for i, ax in enumerate(axes.flat):
             self.plot_state(state_idx=i, ax=ax, **kwargs)
-            ax.set_title(f"{i}: {title[i]} Temporal Evolution")
+            ax.set_title(f"{title[i]} Temporal Evolution")
             ax.set_ylim(
                 ax.get_ylim()[0], 1.1 * pd.concat(self.data)[f"q_lam_true_{i}"].max()
             )
+            ax.set_ylabel("Population")
+
+        return axes
+                
 
     def plot_true_phase_space(
         self,
@@ -156,6 +167,9 @@ class LotkaVolterraModel(DynamicModel):
                 ax=ax,
             )
             start = n
+        
+        ax.set_xlabel("Prey Population")
+        ax.set_ylabel("Predator Population")
 
         return ax
 

@@ -165,6 +165,7 @@ def fit_domain(
 
 def set_shape(array: np.ndarray, shape: Union[List, Tuple] = (1, -1)) -> np.ndarray:
     """Resizes inputs if they are one-dimensional."""
+    array = np.array(array) if not isinstance(array, np.ndarray) else array
     return array.reshape(shape) if array.ndim < 2 else array
 
 
@@ -192,6 +193,111 @@ def get_uniform_box(center, factor=0.5, mins=None, maxs=None):
     return domain
 
 
+
+# def put_df(df: pd.DataFrame, name: str, val: np.ndarray, size: int = 1, mask: np.ndarray = None) -> pd.DataFrame:
+#     """
+#     Store an n-m dimensional `val` into a DataFrame `df` with `n`
+#     rows by unpacking the `m` columns of val into separate columns with
+#     names `{name}_{j}` where j is the index of the column.
+# 
+#     Parameters
+#     ----------
+#     df : pd.DataFrame
+#         The DataFrame to store the data.
+#     name : str
+#         The base name for the columns to be created.
+#     val : np.ndarray
+#         The array containing the data to be stored.
+#     size : int, optional
+#         The number of columns to create, default is 1.
+#     mask : np.ndarray, optional
+#         An optional mask to select specific columns from `val`, default is None.
+# 
+#     Returns
+#     -------
+#     pd.DataFrame
+#         The updated DataFrame with the new columns added.
+# 
+#     Examples
+#     --------
+#     >>> import pandas as pd
+#     >>> import numpy as np
+#     >>> df = pd.DataFrame({'A_0': [1, 2, 3], 'A_1': [4, 5, 6]})
+#     >>> val = np.array([[7, 8], [9, 10], [11, 12]])
+#     >>> put_df(df, 'B', val, size=2)
+#        A_0  A_1  B_0  B_1
+#     0    1    4    7    8
+#     1    2    5    9   10
+#     2    3    6   11   12
+#     """
+#     if mask is not None:
+#         val = val[:, mask]
+# 
+#     for i in range(size):
+#         df[f"{name}_{i}"] = val[:, i]
+# 
+#     return df
+# 
+# 
+# 
+# def get_df(df: pd.DataFrame, name: str, size: int = 1, dropna: bool = Trre) -> np.ndarray:
+#     """
+#     Get columns from a pandas DataFrame.
+# 
+#     This function retrieves columns from a pandas DataFrame based on the provided `name`
+#     and `size` parameters. It returns the selected columns as a NumPy array.
+# 
+#     Parameters
+#     ----------
+#     df : pd.DataFrame
+#         The input DataFrame.
+#     name : str
+#         The base name of the columns to retrieve.
+#     size : int, optional
+#         The number of columns to retrieve, default is 1.
+#     dropna : bool, optional
+#         If True, drop rows with NaN values, default is False.
+# 
+#     Returns
+#     -------
+#     np.ndarray
+#         A NumPy array containing the selected columns.
+# 
+#     Examples
+#     --------
+#     >>> import pandas as pd
+#     >>> df = pd.DataFrame({'A_0': [1, 2, 3, 4], 'A_1': [4, 5, np.nan, 7], 'B_0': [7, 8, 9, 10]})
+#     >>> get_df(df, 'A', size=2)
+#     array([[ 1.,  4.],
+#            [ 2.,  5.],
+#            [ 3., nan],
+#            [ 4.,  7.]])
+# 
+#     >>> get_df(df, 'A', size=2, dropna=True)
+#     array([[1., 4.],
+#            [2., 5.]])
+# 
+#     >>> get_df(df, 'B', dropna=True)
+#     array([[ 7.],
+#            [ 8.],
+#            [ 9.],
+#            [10.]])
+#     """
+#     columns_to_select = [f"{name}_{idx}" for idx in range(size)]
+#     selected_data = df[columns_to_select]
+# 
+#     if dropna:
+#         selected_data = selected_data.dropna()
+# 
+#     val = selected_data.values
+# 
+#     if size == 1:
+#         val = val.reshape(-1, 1)
+# 
+#     return val
+
+
+# TODO: Remove
 def put_df(df, name, val, size=1, mask=None):
     """
     Given an n-m dimensional `val`, stores into dataframe `df` with `n`
@@ -214,7 +320,7 @@ def put_df(df, name, val, size=1, mask=None):
     return df
 
 
-def get_df(df, name, size=1):
+def get_df(df, name, size=1, dropna=False):
     """
     Gets an n-m dimensional `val` from `df` with `n` columns by retrieving
     the `m` columns of val into from columns of `df` with names `{name}_{j}`
@@ -222,7 +328,10 @@ def get_df(df, name, size=1):
     """
     val = np.zeros((df.shape[0], size))
     for idx in range(size):
-        val[:, idx] = df[f"{name}_{idx}"].values
+        if dropna:
+            val[:, idx] = df[f"{name}_{idx}"].dropna().values
+        else:
+            val[:, idx] = df[f"{name}_{idx}"].values
     return val
 
 
@@ -433,3 +542,15 @@ def fmt_bytes(
         return None
 
     return Text.assemble(text, style=style)
+
+
+def remove_col(df, prefix=None, name=None):
+    """
+    TODO: Document
+    """
+    if prefix is not None:
+        return df.loc[:, ~df.columns.str.startswith(prefix)]
+    elif name is not None:
+        return df.loc[:, ~df.columns.str.startswith(name)]
+    else:
+        return df

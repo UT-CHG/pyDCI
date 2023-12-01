@@ -84,7 +84,7 @@ def enable_log(
             ]
         )
     logger.enable("pydci")
-    logger.info("Logger initialized")
+    logger.info("Logger enabled")
 
     return logger
 

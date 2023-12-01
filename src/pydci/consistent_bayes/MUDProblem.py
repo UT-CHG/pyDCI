@@ -149,12 +149,18 @@ class MUDProblem(DCIProblem):
         self.std_dev = std_dev
         if isinstance(data, pd.DataFrame):
             # Compute n_states because self.n_states won't be set until super().init_prob called
+            n_states = len([c for c in data.columns if c.startswith("q_lam_obs")])
+            data = data.dropna()
             data = get_df(
                 data,
                 "q_lam_obs",
-                size=len([c for c in data.columns if c.startswith("q_lam_obs")]),
+                size=n_states,
+                dropna=True,
             )
-        self.data = set_shape(np.array(data), (-1, 1))
+            self.data = data.reshape(-1, 1)
+        else:
+            self.data = set_shape(np.array(data), (-1, 1))
+
         pi_obs = dist.norm(loc=np.mean(data), scale=std_dev)
         super().init_prob(samples, pi_obs, pi_in=pi_in, pi_pr=pi_pr, weights=weights)
         self.mud_point = None
@@ -299,7 +305,7 @@ class MUDProblem(DCIProblem):
         if mud_kwargs is not None:
             mud_point = self.get_mud_point(df)[1][0]
             mud_label = (
-                f"$\lambda^{{MUD}}_{param_idx} = " + f"{mud_point[param_idx]:.4f}$"
+                f"$\lambda^{{MUD}}_{param_idx+1} = " + f"{mud_point[param_idx]:.4f}$"
             )
             mud_args = dict(
                 x=mud_point[param_idx],
@@ -316,7 +322,7 @@ class MUDProblem(DCIProblem):
         if lam_true is not None:
             lam_true = np.reshape(lam_true, (1, -1))
             lam_true_label = (
-                f"$\lambda^{{\dagger}}_{param_idx} = "
+                f"$\lambda^{{\dagger}}_{param_idx+1} = "
                 + f"{lam_true[0][param_idx]:.4f}$"
             )
             ax.axvline(
@@ -344,27 +350,35 @@ class MUDProblem(DCIProblem):
         figsize=(14, 6),
         lam_kwargs=None,
         title=None,
+        axs=None,
     ):
         # TODO: Add explicit figsize argument.
         base_size = 4
         n_params = self.n_params if self.n_params <= max_np else max_np
         grid_plot = closest_factors(n_params)
-        fig, ax = plt.subplots(
-            grid_plot[0],
-            grid_plot[1],
-            figsize=(grid_plot[0] * (base_size + 2), grid_plot[0] * base_size)
-            if figsize is None
-            else figsize,
-        )
+
+        if axs is None:
+            fig, axs = plt.subplots(
+                grid_plot[0],
+                grid_plot[1],
+                figsize=(grid_plot[1] * (base_size + 2), grid_plot[0] * base_size)
+                if figsize is None
+                else figsize,
+            )
 
         lam_true = set_shape(lam_true, (1, -1)) if lam_true is not None else lam_true
         lam_kwargs = {} if lam_kwargs is None else lam_kwargs
-        for i, ax in enumerate(ax.flat):
+        for i, ax in enumerate(axs.flat):
             plot_args = dict(param_idx=i, lam_true=lam_true, ax=ax)
             plot_args.update(lam_kwargs)
             self.plot_L(**plot_args)
 
+        if fig is None:
+            fig = ax.get_figure()
+
         fig.suptitle(self._parse_title(lam_true=lam_true, title=title))
+
+        return axs
 
     def _parse_title(
         self,

@@ -496,6 +496,8 @@ class OnlineSequential:
             pi_in, samples = self.model.get_initial_samples(
                 num_samples=start_sample_size, **sampling_args
             )
+        else:
+            pi_in, samples = _get_samples(None, start_sample_size)
 
         # * Advance forward model for first set of samples.
         # * Note at this point, samples should be cleared if reset set for the solve method
